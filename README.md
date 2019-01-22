@@ -14,6 +14,26 @@ Credits
 MeBoy Change Log
 -
 
+version 1.2: 4 Mar 2007
+-
+* Added support for rotating the screen (with a slight performance penalty)
+* Added speed throttling in the unlikely event that MeBoy exceeds 60 fps
+* Added support for rarely used "LCD control operation" for turning off the LCD
+* Fixed flag handling bug for increment/decrement instructions, other minor
+  flag handling bugs
+* Fixed timing of screen update interrupts, to better match JavaBoy and
+  hopefully Gameboy. Grabbing items while spinning in Metroid 2 no longer
+  causes freeze
+* Fixed minor keyboard handling bug
+* Fixed palette bug (some sprites had incorrect colors, such as Bugs Bunny and
+  some enemies in Super Mario Land 2)
+* Fixed version bug (1.1 identifies itself as 1.0)
+* MeBoyBuilder: Now has a simple UI with some instructions and information
+* MeBoyBuilder: Non-ascii characters in filenames now handled
+* MeBoyBuilder: Warning when selecting large ROM files and Gameboy Color games
+* MeBoyBuilder: MeBoy.jad file is produced, since certain phones seem to
+  require it
+
 version 1.1: 2 Nov 2005
 -
 

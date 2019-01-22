@@ -2,7 +2,7 @@
 
 MeBoy
 
-Copyright 2005 Bjorn Carlin
+Copyright 2005-2007 Bjorn Carlin
 http://www.arktos.se/
 
 Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria
@@ -43,16 +43,14 @@ public class Dmgcpu implements Runnable {
 	/** Carry flag */
 	private final int F_CARRY = 0x10;
 	
-	public final int INSTRS_PER_VBLANK = 9000; /* 10000  */
-	
 	/** Used to set the speed of the emulator.  This controls how
 		*  many instructions are executed for each horizontal line scanned
 		*  on the screen.  Multiply by 154 to find out how many instructions
 		*  per frame.
 		*/
-	public final int INSTRS_PER_HBLANK = 60; /* 60    */
-	private final int INSTRS_IN_MODE_0 = 30;
-	private final int INSTRS_IN_MODE_0_2 = 40;
+	protected final int INSTRS_PER_HBLANK = 60; /* around 8 cycles per instruction */
+	protected final int INSTRS_IN_MODE_0 = 30; // instructions in mode 0
+	protected final int INSTRS_IN_MODE_0_2 = 40; // sum of instructions in mode 0 and 2
 	
 	private final int INSTRS_PER_DIV = 33;
 	
@@ -72,11 +70,6 @@ public class Dmgcpu implements Runnable {
 	
 	/** P10 - P13 (Joypad) interrupt */
 	public final int INT_P10 = 0x10;
-	
-	
-	
-	public boolean debugSlow;
-	
 	
 	
 	/** Registers: 8-bit */
@@ -100,7 +93,7 @@ public class Dmgcpu implements Runnable {
 	
 	public boolean interruptsEnabled = false;
 	public boolean interruptsArmed = false;
-		
+	
 	
 	// 0,1 = rom bank 0
 	// 2,3 = mapped rom bank
@@ -124,8 +117,8 @@ public class Dmgcpu implements Runnable {
 
 	private int instrsPerTima = 131;
 	
-	/** Current state of the buttons, bit reset = pressed. */
-	public int buttonState = 0xff;
+	/** Current state of the buttons, bit set = pressed. */
+	private int buttonState = 0;
 	
 	
 	
@@ -133,9 +126,7 @@ public class Dmgcpu implements Runnable {
 	public GBCanvas screen;
 	public boolean terminate;
 	
-	
-	public static boolean timing;
-	
+	public static boolean timing; // for performance testing
 	
 	
 	// Cartridge:
@@ -159,7 +150,10 @@ public class Dmgcpu implements Runnable {
 	private boolean mbc1LargeRamMode;
 	private boolean cartRamEnabled;
 	
-		
+	private int[] incflags = new int[256];
+	private int[] decflags = new int[256];
+	
+	
 	public Dmgcpu(String cart, GBCanvas gbc) {
 		cartName = cart;
 		initCartridge();
@@ -187,6 +181,8 @@ public class Dmgcpu implements Runnable {
 		nextInterruptEnable = 0x7fffffff;
 		nextTimedInterrupt = INSTRS_PER_HBLANK;
 		
+		initIncDecFlags();
+
 		ioHandlerReset();
 	}
 	
@@ -201,6 +197,18 @@ public class Dmgcpu implements Runnable {
 		memory[7] = mainRam;
 		
 		unflatten(flatState, offset);
+		
+		initIncDecFlags();
+	}
+	
+	private void initIncDecFlags() {
+		incflags[0] = F_ZERO + F_HALFCARRY;
+		for (int i = 0x10; i < 0x100; i += 0x10)
+			incflags[i] = F_HALFCARRY;
+		
+		decflags[0] = F_ZERO + F_SUBTRACT;
+		for (int i = 1; i < 0x100; i++)
+			decflags[i] = F_SUBTRACT + (((i & 0x0f) == 0x0f) ? F_HALFCARRY : 0);
 	}
 	
 	private void unflatten(byte[] flatState, int offset) {
@@ -505,7 +513,62 @@ public class Dmgcpu implements Runnable {
 	
 	/** Check for interrupts that need to be initiated */
 	private final void initiateInterrupts() {
-		if (instrCount >= nextTimaOverflow) {
+		if (instrCount >= nextHBlank) {
+			nextHBlank += INSTRS_PER_HBLANK;
+			
+			// belated increase, since the game hopefully only cares during blanks
+			// this *should* have been done when exiting the last hblank and moving
+			// to mode 2, but this is faster.
+			registers[0x44]++;
+			
+			// send the line to graphic chip
+			int line = registers[0x44] & 0xff;
+			
+			if (line == 153) {
+				// Resetting at line 154 would seem more correct, but seems to work less well.
+				// (And all timing is approximate anyways.)
+				line = registers[0x44] = 0;
+				// falls through to the line < 144 case below
+			}
+
+			if (line < 144) {
+				graphicsChip.notifyScanline(line);
+
+				// do a hblank (mode 0)
+				if (((registers[0x40] & 0x80) != 0) && ((registers[0xff] & INT_LCDC) != 0)) {
+					if (((registers[0x41] & 0x40) != 0) && ((registers[0x45] & 0xff) == line)) {
+						// trigger "lyc coincidence" interrupt
+						interruptsArmed = true;
+						registers[0x0f] |= INT_LCDC;
+					} else if (((registers[0x41] & 0x08) != 0)) {
+						// trigger "mode 0 entered" interrupt
+						interruptsArmed = true;
+						registers[0x0f] |= INT_LCDC;
+					}
+				}
+			} else if (line == 144) {
+				// (note: the vblank is not sent at the beginning of line 144, but rather when the
+				// next hblank would occur on that line. I don't know if it makes a difference.)
+				
+				// whole frame done, draw buffer and start vblank
+				graphicsChip.vBlank();
+				
+				if (((registers[0x40] & 0x80) != 0) && ((registers[0xff] & INT_VBLANK) != 0)) {
+					interruptsArmed = true;
+					registers[0x0f] |= INT_VBLANK;
+					
+					if (((registers[0x41] & 0x10) != 0) && ((registers[0xff] & INT_LCDC) != 0)) {
+						// VBLANK LCDC
+						// armed is already set
+						registers[0x0f] |= INT_LCDC;
+					}
+				}
+			}
+			
+			nextTimedInterrupt = nextHBlank < nextTimaOverflow ? nextHBlank : nextTimaOverflow;
+			nextTimedInterrupt = nextInterruptEnable < nextTimedInterrupt ? nextInterruptEnable
+					: nextTimedInterrupt;
+		} else if (instrCount >= nextTimaOverflow) {
 			nextTimaOverflow += instrsPerTima * (0x100 - registers[0x06]);
 			
 			if ((registers[0xff] & INT_TIMA) != 0) {
@@ -514,54 +577,8 @@ public class Dmgcpu implements Runnable {
 			}
 			
 			nextTimedInterrupt = nextHBlank < nextTimaOverflow ? nextHBlank : nextTimaOverflow;
-			nextTimedInterrupt = nextInterruptEnable < nextTimedInterrupt ? nextInterruptEnable : nextTimedInterrupt;
-		} else if (instrCount >= nextHBlank) {
-			nextHBlank += INSTRS_PER_HBLANK;
-			
-			registers[0x44]++; // belated increase, since the game hopefully only cares during blanks
-			// this *should* have been done when exiting the last hblank and moving to mode 2, but this is faster.
-			
-			// send the line to graphic chip
-			int line = registers[0x44] & 0xff;
-			
-			if (line == 154)
-				line = registers[0x44] = 0;
-			
-			if (line <= 143) {
-				graphicsChip.notifyScanline(line);
-				
-				if (line == 143) {
-					// whole frame done, draw buffer and start vblank
-					graphicsChip.vBlank();
-					
-					if (((registers[0x40] & 0x80) != 0) && ((registers[0xff] & INT_VBLANK) != 0)) {
-						interruptsArmed = true;
-						registers[0x0f] |= INT_VBLANK;
-						
-						if (((registers[0x41] & 0x10) != 0) && ((registers[0xff] & INT_LCDC) != 0)) {
-							// VBLANK LCDC
-							// armed is already set
-							registers[0x0f] |= INT_LCDC;
-						}
-					}
-				} else {
-					// do a hblank (mode 0)
-					if (((registers[0x40] & 0x80) != 0) && ((registers[0xff] & INT_LCDC) != 0)) {
-						if (((registers[0x41] & 0x40) != 0) && ((registers[0x45] & 0xff) == line)) {
-							// trigger "lyc coincidence" interrupt
-							interruptsArmed = true;
-							registers[0x0f] |= INT_LCDC;
-						} else if (((registers[0x41] & 0x08) != 0)) {
-							// trigger "mode 0 entered" interrupt
-							interruptsArmed = true;
-							registers[0x0f] |= INT_LCDC;
-						}
-					}
-				}
-			}
-			
-			nextTimedInterrupt = nextHBlank < nextTimaOverflow ? nextHBlank : nextTimaOverflow;
-			nextTimedInterrupt = nextInterruptEnable < nextTimedInterrupt ? nextInterruptEnable : nextTimedInterrupt;
+			nextTimedInterrupt = nextInterruptEnable < nextTimedInterrupt ? nextInterruptEnable
+					: nextTimedInterrupt;
 		} else if (instrCount >= nextInterruptEnable) {
 			interruptsEnabled = true;
 			
@@ -590,18 +607,7 @@ public class Dmgcpu implements Runnable {
 		int newf = 0;
 		int b1, b2, offset, b3;
 		
-		int f_c = F_CARRY, f_hc = F_HALFCARRY, f_z = F_ZERO, f_sub = F_SUBTRACT;
-		int f_szhc = f_sub + f_z + f_hc;
-		
-		int[] incflags = new int[256];
-		incflags[0] = f_z + f_hc;
-		for (int i = 0x10; i < 0xff; i += 0x10)
-			incflags[i] = f_hc;
-		
-		int[] decflags = new int[256];
-		decflags[0] = f_z + f_sub;
-		for (int i = 1; i < 0xff; i++)
-			decflags[i] = f_sub + (((i & 0x0f) == 0x0f) ? f_hc : 0);
+		int f_szhc = F_SUBTRACT + F_ZERO + F_HALFCARRY;
 		
 		int startTime = (int) System.currentTimeMillis();
 		
@@ -610,13 +616,12 @@ public class Dmgcpu implements Runnable {
 		while (!terminate) {
 			instrCount++;
 			
-			/* debug code for timing 18000000 instructions, which is the time for a demo for SML
+			/* debug code for timing 18000000 instructions, which is roughly the time for a demo for SML
 			if (timing && instrCount >= 18000000) {
 				MeBoy.log("18M time: " + ((int) System.currentTimeMillis() - startTime + 50)/100);
 				terminate = true;
 				screen.showFps = true;
 				screen.repaint();
-				printStat();
 			}*/
 			
 			if (localPC <= decoderMaxCruise) {
@@ -653,11 +658,11 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0x04: // INC B
 					b = (b + 1) & 0xff;
-					f = (f & f_c) | incflags[b];
+					f = (f & F_CARRY) | incflags[b];
 					break;
 				case 0x05: // DEC B
 					b = (b - 1) & 0xff;
-					f = (f & f_c) | decflags[b];
+					f = (f & F_CARRY) | decflags[b];
 					
 					break;
 				case 0x06: // LD B, nn
@@ -666,10 +671,10 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0x07: // RLC A
 					if (a >= 0x80) {
-						f = f_c;
+						f = F_CARRY;
 						a = ((a << 1) + 1) & 0xff;
 					} else if (a == 0) {
-						f = f_z;
+						f = F_ZERO;
 					} else {
 						a <<= 1;
 						f = 0;
@@ -684,10 +689,10 @@ public class Dmgcpu implements Runnable {
 				case 0x09: // ADD HL, BC
 					hl = (hl + ((b << 8) + c));
 					if ((hl & 0xffff0000) != 0) {
-						f = (f & f_szhc) | f_c;
+						f = (f & F_ZERO) | F_CARRY; // halfcarry is wrong
 						hl &= 0xFFFF;
 					} else {
-						f &= f_szhc;
+						f &= F_ZERO; // halfcarry is wrong
 					}
 					break;
 				case 0x0A: // LD A, (BC)
@@ -702,11 +707,11 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0x0C: // INC C
 					c = (c + 1) & 0xff;
-					f = (f & f_c) | incflags[c];
+					f = (f & F_CARRY) | incflags[c];
 					break;
 				case 0x0D: // DEC C
 					c = (c - 1) & 0xff;
-					f = (f & f_c) | decflags[c];
+					f = (f & F_CARRY) | decflags[c];
 					break;
 				case 0x0E: // LD C, nn
 					localPC++;
@@ -714,16 +719,16 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0x0F: // RRC A
 					if ((a & 0x01) == 0x01) {
-						f = f_c;
+						f = F_CARRY;
 					} else {
 						f = 0;
 					}
 					a >>= 1;
-					if ((f & f_c) != 0) {
+					if ((f & F_CARRY) != 0) {
 						a |= 0x80;
 					}
 					if (a == 0) {
-						f |= f_z;
+						f |= F_ZERO;
 					}
 					break;
 				case 0x10: // STOP
@@ -747,11 +752,11 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0x14: // INC D
 					d = (d + 1) & 0xff;
-					f = (f & f_c) | incflags[d];
+					f = (f & F_CARRY) | incflags[d];
 					break;
 				case 0x15: // DEC D
 					d = (d - 1) & 0xff;
-					f = (f & f_c) | decflags[d];
+					f = (f & F_CARRY) | decflags[d];
 					break;
 				case 0x16: // LD D, nn
 					localPC++;
@@ -759,19 +764,19 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0x17: // RL A
 					if ((a & 0x80) == 0x80) {
-						newf = f_c;
+						newf = F_CARRY;
 					} else {
 						newf = 0;
 					}
 					a <<= 1;
 
-					if ((f & f_c) != 0) {
+					if ((f & F_CARRY) != 0) {
 						a |= 1;
 					}
 					
 					a &= 0xFF;
 					if (a == 0) {
-						newf |= f_z;
+						newf |= F_ZERO;
 					}
 					f = newf;
 					break;
@@ -786,10 +791,10 @@ public class Dmgcpu implements Runnable {
 				case 0x19: // ADD HL, DE
 					hl += ((d << 8) + e);
 					if ((hl & 0xFFFF0000) != 0) {
-						f = ((f & f_szhc) | f_c);
+						f = ((f & F_ZERO) | F_CARRY); // halfcarry is wrong
 						hl &= 0xFFFF;
 					} else {
-						f &= f_szhc;
+						f &= F_ZERO; // halfcarry is wrong
 					}
 					break;
 				case 0x1A: // LD A, (DE)
@@ -804,11 +809,11 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0x1C: // INC E
 					e = (e + 1) & 0xff;
-					f = (f & f_c) | incflags[e];
+					f = (f & F_CARRY) | incflags[e];
 					break;
 				case 0x1D: // DEC E
 					e = (e - 1) & 0xff;
-					f = (f & f_c) | decflags[e];
+					f = (f & F_CARRY) | decflags[e];
 					break;
 				case 0x1E: // LD E, nn
 					localPC++;
@@ -816,23 +821,23 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0x1F: // RR A
 					if ((a & 0x01) == 0x01) {
-						newf = f_c;
+						newf = F_CARRY;
 					} else {
 						newf = 0;
 					}
 					a >>= 1;
 
-					if ((f & f_c) != 0) {
+					if ((f & F_CARRY) != 0) {
 						a |= 0x80;
 					}
 
 					if (a == 0) {
-						newf |= f_z;
+						newf |= F_ZERO;
 					}
 					f = newf;
 					break;
 				case 0x20: // JR NZ, nn
-					if (f < f_z) {
+					if (f < F_ZERO) {
 						localPC += 1 + offset;
 						if (localPC < 0 || localPC > decoderMaxCruise) {
 							// switch bank
@@ -854,12 +859,12 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0x24: // INC H
 					b2 = ((hl >> 8) + 1) & 0xff;
-					f = (f & f_c) | incflags[b2];
+					f = (f & F_CARRY) | incflags[b2];
 					hl = (hl & 0xff) + (b2 << 8);
 					break;
 				case 0x25: // DEC H
 					b2 = ((hl >> 8) - 1) & 0xff;
-					f = (f & f_c) | decflags[b2];
+					f = (f & F_CARRY) | decflags[b2];
 					hl = (hl & 0xff) + (b2 << 8);
 					break;
 				case 0x26: // LD H, nn
@@ -870,60 +875,60 @@ public class Dmgcpu implements Runnable {
 					int upperNibble = (a >> 4) & 0x0f;
 					int lowerNibble = a & 0x0f;
 					
-					newf = (f & (f_sub | f_c));
+					newf = (f & (F_SUBTRACT | F_CARRY));
 					
-					if ((f & f_sub) == 0) {
-						if ((f & f_c) == 0) {
-							if ((upperNibble <= 8) && (lowerNibble >= 0xA) && ((f & f_hc) == 0)) {
+					if ((f & F_SUBTRACT) == 0) {
+						if ((f & F_CARRY) == 0) {
+							if ((upperNibble <= 8) && (lowerNibble >= 0xA) && ((f & F_HALFCARRY) == 0)) {
 								a += 0x06;
 							}
 							
-							if ((upperNibble <= 9) && (lowerNibble <= 0x3) && ((f & f_hc) != 0)) {
+							if ((upperNibble <= 9) && (lowerNibble <= 0x3) && ((f & F_HALFCARRY) != 0)) {
 								a += 0x06;
 							}
 							
-							if ((upperNibble >= 0xA) && (lowerNibble <= 0x9) && ((f & f_hc) == 0)) {
+							if ((upperNibble >= 0xA) && (lowerNibble <= 0x9) && ((f & F_HALFCARRY) == 0)) {
 								a += 0x60;
-								newf |= f_c;
+								newf |= F_CARRY;
 							}
 							
-							if ((upperNibble >= 0x9) && (lowerNibble >= 0xA) && ((f & f_hc) == 0)) {
+							if ((upperNibble >= 0x9) && (lowerNibble >= 0xA) && ((f & F_HALFCARRY) == 0)) {
 								a += 0x66;
-								newf |= f_c;
+								newf |= F_CARRY;
 							}
 							
-							if ((upperNibble >= 0xA) && (lowerNibble <= 0x3) && ((f & f_hc) != 0)) {
+							if ((upperNibble >= 0xA) && (lowerNibble <= 0x3) && ((f & F_HALFCARRY) != 0)) {
 								a += 0x66;
-								newf |= f_c;
+								newf |= F_CARRY;
 							}
 							
 						} else { // carry is set
 							
-							if ((upperNibble <= 0x2) && (lowerNibble <= 0x9) && ((f & f_hc) == 0)) {
+							if ((upperNibble <= 0x2) && (lowerNibble <= 0x9) && ((f & F_HALFCARRY) == 0)) {
 								a += 0x60;
 							}
 							
-							if ((upperNibble <= 0x2) && (lowerNibble >= 0xA) && ((f & f_hc) == 0)) {
+							if ((upperNibble <= 0x2) && (lowerNibble >= 0xA) && ((f & F_HALFCARRY) == 0)) {
 								a += 0x66;
 							}
 							
-							if ((upperNibble <= 0x3) && (lowerNibble <= 0x3) && ((f & f_hc) != 0)) {
+							if ((upperNibble <= 0x3) && (lowerNibble <= 0x3) && ((f & F_HALFCARRY) != 0)) {
 								a += 0x66;
 							}
 						}
 						
 					} else { // subtract is set
 						
-						if ((f & f_c) == 0) {
-							if ((upperNibble <= 0x8) && (lowerNibble >= 0x6) && ((f & f_hc) != 0)) {
+						if ((f & F_CARRY) == 0) {
+							if ((upperNibble <= 0x8) && (lowerNibble >= 0x6) && ((f & F_HALFCARRY) != 0)) {
 								a += 0xFA;
 							}
 						} else { // Carry is set
-							if ((upperNibble >= 0x7) && (lowerNibble <= 0x9) && ((f & f_hc) == 0)) {
+							if ((upperNibble >= 0x7) && (lowerNibble <= 0x9) && ((f & F_HALFCARRY) == 0)) {
 								a += 0xA0;
 							}
 							
-							if ((upperNibble >= 0x6) && (lowerNibble >= 0x6) && ((f & f_hc) != 0)) {
+							if ((upperNibble >= 0x6) && (lowerNibble >= 0x6) && ((f & F_HALFCARRY) != 0)) {
 								a += 0x9A;
 							}
 						}
@@ -931,14 +936,14 @@ public class Dmgcpu implements Runnable {
 						
 					a &= 0xff;
 					if (a == 0)
-						newf |= f_z;
+						newf |= F_ZERO;
 						
 					// halfcarry is wrong
 					f = newf;
 					
 					break;
 				case 0x28: // JR Z, nn
-					if (f >= f_z) {
+					if (f >= F_ZERO) {
 						localPC += 1 + offset;
 						if (localPC < 0 || localPC > decoderMaxCruise) {
 							// switch bank
@@ -951,10 +956,10 @@ public class Dmgcpu implements Runnable {
 				case 0x29: // ADD HL, HL
 					hl *= 2;
 					if ((hl & 0xFFFF0000) != 0) {
-						f = (f & f_z) | f_c;
+						f = (f & F_ZERO) | F_CARRY; // halfcarry is wrong
 						hl &= 0xFFFF;
 					} else {
-						f &= f_z;
+						f &= F_ZERO; // halfcarry is wrong
 					}
 					break;
 				case 0x2A: // LDI A, (HL)
@@ -965,12 +970,12 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0x2C: // INC L
 					b2 = (hl + 1) & 0xff;
-					f = (f & f_c) | incflags[b2];
+					f = (f & F_CARRY) | incflags[b2];
 					hl = (hl & 0xff00) + b2;
 					break;
 				case 0x2D: // DEC L
 					b2 = (hl - 1) & 0xff;
-					f = (f & f_c) | decflags[b2];
+					f = (f & F_CARRY) | decflags[b2];
 					hl = (hl & 0xff00) + b2;
 					break;
 				case 0x2E: // LD L, nn
@@ -979,10 +984,10 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0x2F: // CPL A
 					a = ((~a) & 0x00FF);
-					f = ((f & (f_c | f_z)) | f_sub | f_hc);
+					f |= F_SUBTRACT | F_HALFCARRY;
 					break;
 				case 0x30: // JR NC, nn
-					if ((f & f_c) == 0) {
+					if ((f & F_CARRY) == 0) {
 						localPC += 1 + offset;
 						if (localPC < 0 || localPC > decoderMaxCruise) {
 							// switch bank
@@ -1004,12 +1009,12 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0x34: // INC (HL)
 					b2 = (addressRead(hl) + 1) & 0xff;
-					f = (f & f_c) | incflags[b2];
+					f = (f & F_CARRY) | incflags[b2];
 					addressWrite(hl, b2);
 					break;
 				case 0x35: // DEC (HL)
 					b2 = (addressRead(hl) - 1) & 0xff;
-					f = (f & f_c) | decflags[b2];
+					f = (f & F_CARRY) | decflags[b2];
 					addressWrite(hl, b2);
 					break;
 				case 0x36: // LD (HL), nn
@@ -1017,10 +1022,10 @@ public class Dmgcpu implements Runnable {
 					addressWrite(hl, b2);
 					break;
 				case 0x37: // SCF
-					f = (f & f_z) | f_c;
+					f = (f & F_ZERO) | F_CARRY;
 					break;
 				case 0x38: // JR C, nn
-					if ((f & f_c) != 0) {
+					if ((f & F_CARRY) != 0) {
 						localPC += 1 + offset;
 						if (localPC < 0 || localPC > decoderMaxCruise) {
 							// switch bank
@@ -1033,10 +1038,10 @@ public class Dmgcpu implements Runnable {
 				case 0x39: // ADD HL, SP
 					hl += sp;
 					if ((hl & 0xFFFF0000) != 0) {
-						f = (f & f_z) | f_c;
+						f = (f & F_ZERO) | F_CARRY; // halfcarry is wrong
 						hl &= 0xFFFF;
 					} else {
-						f &= f_z;
+						f &= F_ZERO; // halfcarry is wrong
 					}
 					break;
 				case 0x3A: // LD A, (HL-)
@@ -1047,18 +1052,18 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0x3C: // INC A
 					a = (a + 1) & 0xff;
-					f = (f & f_c) | incflags[a];
+					f = (f & F_CARRY) | incflags[a];
 					break;
 				case 0x3D: // DEC A
 					a = (a - 1) & 0xff;
-					f = (f & f_c) | decflags[a];
+					f = (f & F_CARRY) | decflags[a];
 					break;
 				case 0x3E: // LD A, nn
 					localPC++;
 					a = b2;
 					break;
 				case 0x3F: // CCF
-					f = (f & (f_c | f_z)) ^ f_c;
+					f = (f & (F_CARRY | F_ZERO)) ^ F_CARRY;
 					break;
 					
 					// B = r
@@ -1154,18 +1159,18 @@ public class Dmgcpu implements Runnable {
 					
 				case 0xA7: // AND A, A
 					if (a == 0) {
-						f = f_hc + f_z;
+						f = F_HALFCARRY + F_ZERO;
 					} else {
-						f = f_hc;
+						f = F_HALFCARRY;
 					}
 					break;
 					
 				case 0xAF: // XOR A, A (== LD A, 0)
 					a = 0;
-					f = f_z; // Set zero flag
+					f = F_ZERO; // Set zero flag
 					break;
 				case 0xC0: // RET NZ
-					if ((f & f_z) == 0) {
+					if (f < F_ZERO) {
 						popPC();
 					}
 					break;
@@ -1174,7 +1179,7 @@ public class Dmgcpu implements Runnable {
 					b = addressRead(sp++) & 0xff;
 					break;
 				case 0xC2: // JP NZ, nnnn
-					if (f < f_z) {
+					if (f < F_ZERO) {
 						setPC((b3 << 8) + b2);
 					} else {
 						localPC += 2;
@@ -1185,7 +1190,7 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0xC4: // CALL NZ, nnnn
 					localPC += 2;
-					if (f < f_z) {
+					if (f < F_ZERO) {
 						pushPC();
 						setPC((b3 << 8) + b2);
 					}
@@ -1197,28 +1202,28 @@ public class Dmgcpu implements Runnable {
 				case 0xC6: // ADD A, nn
 					localPC++;
 					if ((a & 0x0F) + (b2 & 0x0F) >= 0x10) {
-						f = f_hc;
+						f = F_HALFCARRY;
 					} else {
 						f = 0;
 					}
-						
-						a += b2;
+					
+					a += b2;
 					
 					if (a > 0xff) {
-						f |= f_c;
+						f |= F_CARRY;
 						a &= 0xff;
 					}
-						
-						if (a == 0) {
-							f |= f_z;
-						}
-						break;
-				case 0xCF: // RST 08
+					
+					if (a == 0) {
+						f |= F_ZERO;
+					}
+					break;
+				case 0xC7: // RST 00
 					pushPC();
-					setPC(0x08);
+					setPC(0x00);
 					break;
 				case 0xC8: // RET Z
-					if (f >= f_z) {
+					if (f >= F_ZERO) {
 						popPC();
 					}
 					break;
@@ -1226,7 +1231,7 @@ public class Dmgcpu implements Runnable {
 					popPC();
 					break;
 				case 0xCA: // JP Z, nnnn
-					if (f >= f_z) {
+					if (f >= F_ZERO) {
 						setPC((b3 << 8) + b2);
 					} else {
 						localPC += 2;
@@ -1251,10 +1256,10 @@ public class Dmgcpu implements Runnable {
 							case 0x00: // RLC A
 								f = 0;
 								if (data >= 0x80) {
-									f = f_c;
+									f = F_CARRY;
 								}
 								data = (data << 1) & 0xff;
-								if ((f & f_c) != 0) {
+								if ((f & F_CARRY) != 0) {
 									data |= 1;
 								}
 								
@@ -1262,35 +1267,35 @@ public class Dmgcpu implements Runnable {
 							case 0x08: // RRC A
 								f = 0;
 								if ((data & 0x01) != 0) {
-									f = f_c;
+									f = F_CARRY;
 								}
 								data >>= 1;
-								if ((f & f_c) != 0) {
+								if ((f & F_CARRY) != 0) {
 									data |= 0x80;
 								}
 								break;
 							case 0x10: // RL r
 								if (data >= 0x80) {
-									newf = f_c;
+									newf = F_CARRY;
 								} else {
 									newf = 0;
 								}
 								data = (data << 1) & 0xff;
 								
-								if ((f & f_c) != 0) {
+								if ((f & F_CARRY) != 0) {
 									data |= 1;
 								}
 								f = newf;
 								break;
 							case 0x18: // RR r
 								if ((data & 0x01) != 0) {
-									newf = f_c;
+									newf = F_CARRY;
 								} else {
 									newf = 0;
 								}
 								data >>= 1;
 								
-								if ((f & f_c) != 0) {
+								if ((f & F_CARRY) != 0) {
 									data |= 0x80;
 								}
 									
@@ -1299,7 +1304,7 @@ public class Dmgcpu implements Runnable {
 							case 0x20: // SLA r
 								f = 0;
 								if ((data & 0x80) != 0) {
-									f = f_c;
+									f = F_CARRY;
 								}
 								
 								data = (data << 1) & 0xff;
@@ -1307,7 +1312,7 @@ public class Dmgcpu implements Runnable {
 							case 0x28: // SRA r
 								f = 0;
 								if ((data & 0x01) != 0) {
-									f = f_c;
+									f = F_CARRY;
 								}
 								
 								data = (data & 0x80) + (data >> 1); // i.e. duplicate high bit=sign
@@ -1320,7 +1325,7 @@ public class Dmgcpu implements Runnable {
 							case 0x38: // SRL r
 								f = 0;
 								if ((data & 0x01) != 0) {
-									f = f_c;
+									f = F_CARRY;
 								}
 								
 								data >>= 1;
@@ -1328,16 +1333,16 @@ public class Dmgcpu implements Runnable {
 						}
 						
 						if (data == 0) {
-							f |= f_z;
+							f |= F_ZERO;
 						}
 						registerWrite(regNum, data);
 					} else {
 						int bitMask = 1 << ((b2 & 0x38) >> 3);
 						
 						if ((b2 & 0xC0) == 0x40) { // BIT n, r
-							f = ((f & f_c) | f_hc);
+							f = ((f & F_CARRY) | F_HALFCARRY);
 							if ((data & bitMask) == 0) {
-								f |= f_z;
+								f |= F_ZERO;
 							}
 						} else if ((b2 & 0xC0) == 0x80) { // RES n, r
 							registerWrite(regNum, (data & (0xFF - bitMask)));
@@ -1345,11 +1350,11 @@ public class Dmgcpu implements Runnable {
 							registerWrite(regNum, (data | bitMask));
 						}
 					}
-						
-						break;
+					
+					break;
 				case 0xCC: // CALL Z, nnnnn
 					localPC += 2;
-					if (f >= f_z) {
+					if (f >= F_ZERO) {
 						pushPC();
 						setPC((b3 << 8) + b2);
 					}
@@ -1362,32 +1367,32 @@ public class Dmgcpu implements Runnable {
 				case 0xCE: // ADC A, nn
 					localPC++;
 					
-					if ((f & f_c) != 0) {
+					if ((f & F_CARRY) != 0) {
 						b2++;
 					}
-						if ((a & 0x0F) + (b2 & 0x0F) >= 0x10) {
-							f = f_hc;
-						} else {
-							f = 0;
-						}
-						
-						a += b2;
+					if ((a & 0x0F) + (b2 & 0x0F) >= 0x10) {
+						f = F_HALFCARRY;
+					} else {
+						f = 0;
+					}
 					
+					a += b2;
+				
 					if (a > 0xff) {
-						f |= f_c;
+						f |= F_CARRY;
 						a &= 0xff;
 					}
-						
-						if (a == 0) {
-							f |= f_z;
-						}
-						break;
-				case 0xC7: // RST 00
+					
+					if (a == 0) {
+						f |= F_ZERO;
+					}
+					break;
+				case 0xCF: // RST 08
 					pushPC();
-					setPC(0x00);
+					setPC(0x08);
 					break;
 				case 0xD0: // RET NC
-					if ((f & f_c) == 0) {
+					if ((f & F_CARRY) == 0) {
 						popPC();
 					}
 					break;
@@ -1396,7 +1401,7 @@ public class Dmgcpu implements Runnable {
 					d = addressRead(sp++) & 0xff;
 					break;
 				case 0xD2: // JP NC, nnnn
-					if ((f & f_c) == 0) {
+					if ((f & F_CARRY) == 0) {
 						setPC((b3 << 8) + b2);
 					} else {
 						localPC += 2;
@@ -1404,7 +1409,7 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0xD4: // CALL NC, nnnn
 					localPC += 2;
-					if ((f & f_c) == 0) {
+					if ((f & F_CARRY) == 0) {
 						pushPC();
 						setPC((b3 << 8) + b2);
 					}
@@ -1416,28 +1421,27 @@ public class Dmgcpu implements Runnable {
 				case 0xD6: // SUB A, nn
 					localPC++;
 					
-					f = f_sub;
+					f = F_SUBTRACT;
 					
 					if ((a & 0x0F) < (b2 & 0x0F)) {
-						f |= f_hc;
+						f |= F_HALFCARRY;
 					}
-						
-						a -= b2;
+					
+					a -= b2;
 					
 					if (a < 0) {
-						f |= f_c;
+						f |= F_CARRY;
 						a &= 0xff;
+					} else if (a == 0) {
+						f |= F_ZERO;
 					}
-						if (a == 0) {
-							f |= f_z;
-						}
-						break;
+					break;
 				case 0xD7: // RST 10
 					pushPC();
 					setPC(0x10);
 					break;
 				case 0xD8: // RET C
-					if ((f & f_c) != 0) {
+					if ((f & F_CARRY) != 0) {
 						popPC();
 					}
 					break;
@@ -1446,7 +1450,7 @@ public class Dmgcpu implements Runnable {
 					popPC();
 					break;
 				case 0xDA: // JP C, nnnn
-					if ((f & f_c) != 0) {
+					if ((f & F_CARRY) != 0) {
 						setPC((b3 << 8) + b2);
 					} else {
 						localPC += 2;
@@ -1454,33 +1458,31 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0xDC: // CALL C, nnnn
 					localPC += 2;
-					if ((f & f_c) != 0) {
+					if ((f & F_CARRY) != 0) {
 						pushPC();
 						setPC((b3 << 8) + b2);
 					}
-						break;
+					break;
 				case 0xDE : // SBC A, nn
 					localPC++;
-					if ((f & f_c) != 0) {
+					if ((f & F_CARRY) != 0) {
 						b2++;
 					}
-						
-						f = f_sub;
+					
+					f = F_SUBTRACT;
 					if ((a & 0x0F) < (b2 & 0x0F)) {
-						f |= f_hc;
+						f |= F_HALFCARRY;
 					}
-						
-						a -= b2;
+					
+					a -= b2;
 					
 					if (a < 0) {
-						f |= f_c;
+						f |= F_CARRY;
 						a &= 0xff;
+					} else if (a == 0) {
+						f |= F_ZERO;
 					}
-						if (a == 0) {
-							f |= f_z;
-						}
-						break;
-					
+					break;
 				case 0xDF: // RST 18
 					pushPC();
 					setPC(0x18);
@@ -1508,7 +1510,9 @@ public class Dmgcpu implements Runnable {
 				case 0xE6: // AND nn
 					localPC++;
 					a &= b2;
-					f = 0; if (a == 0) f = f_z;
+					f = 0;
+					if (a == 0)
+						f = F_ZERO;
 					break;
 				case 0xE7: // RST 20
 					pushPC();
@@ -1521,7 +1525,7 @@ public class Dmgcpu implements Runnable {
 					f = 0;
 					if (sp > 0xffff || sp < 0) {
 						sp &= 0xffff;
-						f = f_c;
+						f = F_CARRY;
 					}
 					break;
 				case 0xE9: // JP (HL)
@@ -1536,7 +1540,7 @@ public class Dmgcpu implements Runnable {
 					a ^= b2;
 					f = 0;
 					if (a == 0)
-						f = f_z;
+						f = F_ZERO;
 					break;
 				case 0xEF: // RST 28
 					pushPC();
@@ -1544,14 +1548,14 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0xF0: // LDH A, (FFnn)
 					localPC++;
-					if (b2 > 0x41 && b2 < 0xff)
+					if (b2 > 0x41)
 						a = registers[b2] & 0xff;
 					else
 						a = ioRead(b2) & 0xff;
 					
 					break;
 				case 0xF1: // POP AF
-					f = addressRead(sp++) & 0xff;
+					f = addressRead(sp++) & 0xf0;
 					a = addressRead(sp++) & 0xff;
 					break;
 				case 0xF2: // LD A, (FF00 + C)
@@ -1569,7 +1573,7 @@ public class Dmgcpu implements Runnable {
 					a |= b2;
 					f = 0;
 					if (a == 0) {
-						f = f_z;
+						f = F_ZERO;
 					}
 					break;
 				case 0xF7: // RST 30
@@ -1581,7 +1585,7 @@ public class Dmgcpu implements Runnable {
 					hl = (sp + offset);
 					f = 0;
 					if ((hl & 0xffff0000) != 0) {
-						f = f_c;
+						f = F_CARRY;
 						hl &= 0xFFFF;
 					}
 					break;
@@ -1598,11 +1602,11 @@ public class Dmgcpu implements Runnable {
 					break;
 				case 0xFE: // CP nn
 					localPC++;
-					f = ((a & 0x0F) < (b2 & 0x0F)) ? f_hc | f_sub : f_sub;
+					f = ((a & 0x0F) < (b2 & 0x0F)) ? F_HALFCARRY | F_SUBTRACT : F_SUBTRACT;
 					if (a == b2) {
-						f |= f_z;
+						f |= F_ZERO;
 					} else if (a < b2) {
-						f |= f_c;
+						f |= F_CARRY;
 					}
 					break;
 				case 0xFF: // RST 38
@@ -1615,14 +1619,14 @@ public class Dmgcpu implements Runnable {
 						int operand = registerRead(b1 & 0x07);
 						switch ((b1 & 0x38) >> 3) {
 							case 1: // ADC A, r
-								if ((f & f_c) != 0) {
+								if ((f & F_CARRY) != 0) {
 									operand++;
 								}
 								// Note!  No break!
 							case 0: // ADD A, r
 								
 								if ((a & 0x0F) + (operand & 0x0F) >= 0x10) {
-									f = f_hc;
+									f = F_HALFCARRY;
 								} else {
 									f = 0;
 								}
@@ -1630,63 +1634,63 @@ public class Dmgcpu implements Runnable {
 								a += operand;
 								
 								if (a > 0xff) {
-									f |= f_c;
+									f |= F_CARRY;
 									a &= 0xff;
 								}
 								
 								if (a == 0) {
-									f |= f_z;
+									f |= F_ZERO;
 								}
 								break;
 							case 3: // SBC A, r
-								if ((f & f_c) != 0) {
+								if ((f & F_CARRY) != 0) {
 									operand++;
 								}
 								// Note! No break!
 							case 2: // SUB A, r
 								
-								f = f_sub;
+								f = F_SUBTRACT;
 								
 								if ((a & 0x0F) < (operand & 0x0F)) {
-									f |= f_hc;
+									f |= F_HALFCARRY;
 								}
 								
 								a -= operand;
 								
 								if (a < 0) {
-									f |= f_c;
+									f |= F_CARRY;
 									a &= 0xff;
 								}
 								if (a == 0) {
-									f |= f_z;
+									f |= F_ZERO;
 								}
 									
 								break;
 							case 4: // AND A, r
 								a &= operand;
 								if (a == 0) {
-									f = f_z;
+									f = F_HALFCARRY + F_ZERO;
 								} else {
-									f = 0;
+									f = F_HALFCARRY;
 								}
 								break;
 							case 5: // XOR A, r
 								a ^= operand;
-								f = (a == 0) ? f_z : 0;
+								f = (a == 0) ? F_ZERO : 0;
 								break;
 							case 6: // OR A, r
 								a |= operand;
-								f = (a == 0) ? f_z : 0;
+								f = (a == 0) ? F_ZERO : 0;
 								break;
 							case 7: // CP A, r (compare)
-								f = f_sub;
+								f = F_SUBTRACT;
 								if (a == operand) {
-									f |= f_z;
+									f |= F_ZERO;
 								} else if (a < operand) {
-									f |= f_c;
+									f |= F_CARRY;
 								}
 								if ((a & 0x0F) < (operand & 0x0F)) {
-									f |= f_hc;
+									f |= F_HALFCARRY;
 								}
 								break;
 						}
@@ -1697,7 +1701,6 @@ public class Dmgcpu implements Runnable {
 						break;
 					}
 			}
-			
 			
 			if (interruptsArmed && interruptsEnabled) {
 				checkInterrupts();
@@ -1731,7 +1734,7 @@ public class Dmgcpu implements Runnable {
 			}
 			
 			if ((registers[0x44] & 0xff) >= 144) {
-				output |= 1;
+				output |= 1; // mode 1
 			} else {
 				int cyclePos = instrCount - nextHBlank + INSTRS_PER_HBLANK; // instrCount % INSTRS_PER_HBLANK;
 				
@@ -1763,17 +1766,19 @@ public class Dmgcpu implements Runnable {
 	public void ioWrite(int num, int data) {
 		switch (num) {
 			case 0x00: // FF00 - Joypad
-				int output = -1;
+				int output = 0;
 				if ((data & 0x10) == 0) {
 					// P14
-					output &= buttonState & 0x0f;
+					output |= buttonState & 0x0f;
 				}
-				
+
 				if ((data & 0x20) == 0) {
 					// P15
-					output &= buttonState >> 4;
+					output |= buttonState >> 4;
 				}
-				registers[0x00] = (byte) output;
+				// the high nybble is unused for reading (according to gbcpuman)
+				registers[0x00] = (byte) ((data & 0xf0) | (~output & 0x0f));
+				
 				break;
 				
 			case 0x02: // Serial
@@ -1788,8 +1793,8 @@ public class Dmgcpu implements Runnable {
 					}
 					registers[0x02] &= 0x7F;
 				}
-					
-					break;
+				
+				break;
 				
 			case 0x04: // DIV
 				divReset = instrCount;
@@ -1802,7 +1807,7 @@ public class Dmgcpu implements Runnable {
 				
 			case 0x07: // TAC
 				if ((data & 0x04) != 0) {
-					int instrsPerSecond = INSTRS_PER_VBLANK * 60;
+					int instrsPerSecond = INSTRS_PER_HBLANK * 154 * 60;
 					int clockFrequency = (data & 0x03);
 					
 					switch (clockFrequency) {
@@ -1836,7 +1841,11 @@ public class Dmgcpu implements Runnable {
 			case 0x40: // LCDC
 				graphicsChip.bgEnabled = true;
 				
-				// fixme, implement bit 6 & 7
+				// BIT 7
+				graphicsChip.lcdEnabled = ((data & 0x80) != 0);
+				
+				// BIT 6
+				graphicsChip.hiWinTileMapAddress = ((data & 0x40) != 0);
 				
 				// BIT 5
 				graphicsChip.winEnabled = ((data & 0x20) != 0);
@@ -1862,7 +1871,7 @@ public class Dmgcpu implements Runnable {
 					graphicsChip.bgEnabled = false;
 					graphicsChip.winEnabled = false;
 				}
-					
+				
 				registers[0x40] = (byte) data;
 				break;
 				
@@ -1989,7 +1998,6 @@ public class Dmgcpu implements Runnable {
 	private final void cartridgeWrite(int addr, int data) {
 		int halfbank = addr >> 13;
 		int subaddr = addr & 0x1fff;
-		int ramAddress = 0;
 		
 		switch (cartType) {
 			case 0: /* ROM Only */
@@ -2103,7 +2111,8 @@ public class Dmgcpu implements Runnable {
 		/** Translation between ROM size byte contained in the ROM header, and the number
 		*  of 16Kb ROM banks the cartridge will contain
 		*/
-		int[][] romSizeTable = { { 0, 2}, { 1, 4}, { 2, 8}, { 3, 16}, { 4, 32}, { 5, 64}, { 6, 128}, { 7, 256}, { 0x52, 72}, { 0x53, 80}, { 0x54, 96}};
+		int[][] romSizeTable = { { 0, 2}, { 1, 4}, { 2, 8}, { 3, 16}, { 4, 32}, { 5, 64},
+				{ 6, 128}, { 7, 256}, { 0x52, 72}, { 0x53, 80}, { 0x54, 96}};
 		
 		int i = 0;
 		while ((i < romSizeTable.length) && (romSizeTable[i][0] != sizeByte)) {
@@ -2119,5 +2128,21 @@ public class Dmgcpu implements Runnable {
 	
 	public final boolean hasBattery() {
 		return (cartType == 3) || (cartType == 9) || (cartType == 0x1B) || (cartType == 0x1E) || (cartType == 6) || (cartType == 0x10) || (cartType == 0x13);
+	}
+	
+	public void buttonDown(int buttonIndex) {
+		buttonState |= 1 << buttonIndex;
+		if ((registers[0xff] & INT_P10) != 0) {
+			interruptsArmed = true;
+			registers[0x0f] |= INT_P10;
+		}
+	}
+
+	public void buttonUp(int buttonIndex) {
+		buttonState &= 0xff - (1 << buttonIndex);
+		if ((registers[0xff] & INT_P10) != 0) {
+			interruptsArmed = true;
+			registers[0x0f] |= INT_P10;
+		}
 	}
 }

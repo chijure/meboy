@@ -2,7 +2,7 @@
  
  MeBoy
  
- Copyright 2005 Bjorn Carlin
+ Copyright 2005-2007 Bjorn Carlin
  http://www.arktos.se/
  
  Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria
@@ -28,12 +28,13 @@
 import javax.microedition.lcdui.*;
 import javax.microedition.midlet.*;
 import javax.microedition.rms.*;
+import javax.microedition.lcdui.game.Sprite;
 
 
 public class GBCanvas extends Canvas implements CommandListener {
 	public MeBoy parent;
 	private Dmgcpu cpu;
-	private int w, h, l, t;
+	private int w, h, l, t, sw, sh, trans;
 	private boolean clear = true;
 	boolean showFps = MeBoy.debug;
 	private boolean fullScreen;
@@ -47,6 +48,9 @@ public class GBCanvas extends Canvas implements CommandListener {
 	private boolean settingKeys;
 	
 	private String cartName;
+	
+	private Image buf;
+	private Graphics bufg;
 	
 	
 	private GBCanvas() {
@@ -62,6 +66,11 @@ public class GBCanvas extends Canvas implements CommandListener {
 		addCommand(new Command("Full screen", Command.SCREEN, 17));
 		addCommand(new Command("Unload cart", Command.SCREEN, 2));
 		setCommandListener(this);
+		
+		if (MeBoy.rotations != 0) {
+			buf = Image.createImage(160, 144);
+			bufg = buf.getGraphics();
+		}
 	}
 	
 	public GBCanvas(MeBoy p) {
@@ -112,28 +121,37 @@ public class GBCanvas extends Canvas implements CommandListener {
 	public void setDimensions() {
 		w = getWidth();
 		h = getHeight();
-		l = (w - 160) / 2;
-		int sh = showFps ? 160 : 144;
+		
+		int[] transs = new int[] {0, 5, 3, 6};
+		trans = transs[MeBoy.rotations];
+		
+		if ((MeBoy.rotations & 1) == 1) {
+			sw = 144;
+			sh = 160;
+		} else {
+			sw = 160;
+			sh = 144;
+		}
+		
+		l = (w - sw) / 2;
 		t = (h - sh) / 2;
+		if (showFps)
+			t -= 8;
 		
 		if (l < 0)
 			l = 0;
 		if (t < 0)
 			t = 0;
 		
-		cpu.graphicsChip.left = l;
-		cpu.graphicsChip.top = t;
+		cpu.graphicsChip.left = trans == 0 ? l : 0;
+		cpu.graphicsChip.top = trans == 0 ? t : 0;
 	}
 	
 	public void keyReleased(int keyCode) {
 		for (int i = 0; i < 8; i++) {
 			if (keyCode == key[i]) {
-				cpu.buttonState |= 1 << i;
+				cpu.buttonUp(i);
 			}
-		}
-		if ((cpu.registers[0xff] & cpu.INT_P10) != 0) {
-			cpu.interruptsArmed = true;
-			cpu.registers[0x0f] |= cpu.INT_P10;
 		}
 	}
 	
@@ -151,17 +169,12 @@ public class GBCanvas extends Canvas implements CommandListener {
 		
 		for (int i = 0; i < 8; i++) {
 			if (keyCode == key[i]) {
-				cpu.buttonState &= 0xff - (1<<i);
+				cpu.buttonDown(i);
 			}
 		}
 		
-		if ((cpu.registers[0xff] & cpu.INT_P10) != 0) {
-			cpu.interruptsArmed = true;
-			cpu.registers[0x0f] |= cpu.INT_P10;
-		}
-		
-		if (keyCode == KEY_NUM0 && MeBoy.debug)
-			cpu.debugSlow = !cpu.debugSlow;//showFps = !showFps;
+//		if (keyCode == KEY_NUM0 && MeBoy.debug)
+//			showFps = !showFps;
 	}
 	
 	public void commandAction(Command c, Displayable s) {
@@ -228,9 +241,9 @@ public class GBCanvas extends Canvas implements CommandListener {
 	
 	public final void redrawSmall() {
 		if (showFps)
-			repaint(l, t, 160, 144);
+			repaint(l, t, sw, sh+16);
 		else
-			repaint(l, t, 160, 160);
+			repaint(l, t, sw, sh);
 	}
 	
 	public final void showNotify() {
@@ -241,14 +254,19 @@ public class GBCanvas extends Canvas implements CommandListener {
 	public final void paint(Graphics g) {
 		if (!clear) {
 			if (showFps) {
-				g.setClip(l, t+144, 80, 16);
+				g.setClip(l, t+sh, 80, 16);
 				g.setColor(-1);
-				g.fillRect(l, t+144, 80, 16);
+				g.fillRect(l, t+sh, 80, 16);
 				g.setColor(0);
-				g.drawString("skip: " + cpu.graphicsChip.lastSkipCount, l, t+144, 20);
+				g.drawString("skip: " + cpu.graphicsChip.lastSkipCount, l, t+sh, 20);
 			}
-			g.setClip(l, t, 160, 144);
-			cpu.graphicsChip.draw(g);
+			g.setClip(l, t, sw, sh);
+			if (trans == 0) {
+				cpu.graphicsChip.draw(g);
+			} else {
+				cpu.graphicsChip.draw(bufg);
+				g.drawRegion(buf, 0, 0, 160, 144, trans, l, t, 20);
+			}
 		} else if (settingKeys) {
 			g.setColor(0x446688);
 			g.fillRect(0, 0, w, h);
@@ -263,18 +281,23 @@ public class GBCanvas extends Canvas implements CommandListener {
 			g.setColor(0x446688);
 			g.fillRect(0, 0, w, h);
 			g.setColor(-1);
-			g.fillRect(l, t, 160, 144);
+			g.fillRect(l, t, sw, sh);
 			
 			if (showFps) {
-				g.setClip(l, t+144, 80, 16);
+				g.setClip(l, t+sh, 80, 16);
 				g.setColor(-1);
-				g.fillRect(l, t+144, 80, 16);
+				g.fillRect(l, t+sh, 80, 16);
 				g.setColor(0);
-				g.drawString("skip: " + cpu.graphicsChip.lastSkipCount, l, t+144, 20);
+				g.drawString("skip: " + cpu.graphicsChip.lastSkipCount, l, t+sh, 20);
 			}
 			
-			g.setClip(l, t, 160, 144);
-			cpu.graphicsChip.draw(g);
+			g.setClip(l, t, sw, sh);
+			if (trans == 0) {
+				cpu.graphicsChip.draw(g);
+			} else {
+				cpu.graphicsChip.draw(bufg);
+				g.drawRegion(buf, 0, 0, 160, 144, trans, l, t, 20);
+			}
 		}
 	}
 	
@@ -296,16 +319,17 @@ public class GBCanvas extends Canvas implements CommandListener {
 		try {
 			RecordStore rs = RecordStore.openRecordStore("set", true);
 			
-			byte[] b = new byte[36];
+			byte[] b = new byte[40];
 			
 			for (int i = 0; i < 8; i++)
 				setInt(b, i * 4, key[i]);
 			setInt(b, 32, GraphicsChip.maxFrameSkip);
+			setInt(b, 36, MeBoy.rotations);
 			
 			if (rs.getNumRecords() == 0) {
-				rs.addRecord(b, 0, 36);
+				rs.addRecord(b, 0, 40);
 			} else {
-				rs.setRecord(1, b, 0, 36);
+				rs.setRecord(1, b, 0, 40);
 			}
 			rs.closeRecordStore();
 		} catch (Exception e) {
@@ -323,6 +347,8 @@ public class GBCanvas extends Canvas implements CommandListener {
 				for (int i = 0; i < 8; i++)
 					key[i] = getInt(b, i * 4);
 				GraphicsChip.maxFrameSkip = getInt(b, 32);
+				if (b.length >= 40)
+					MeBoy.rotations = getInt(b, 36);
 			} else {
 				writeSettings();
 			}

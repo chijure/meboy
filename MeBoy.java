@@ -2,7 +2,7 @@
  
  MeBoy
  
- Copyright 2005 Bjorn Carlin
+ Copyright 2005-2007 Bjorn Carlin
  http://www.arktos.se/
  
  Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria
@@ -30,17 +30,19 @@ import javax.microedition.midlet.*;
 import javax.microedition.rms.*;
 
 /**
- The main class offers a list of games, read from the file "carts.txt".
+The main class offers a list of games, read from the file "carts.txt".
  It also handles logging.
-*/
+ */
 
 public class MeBoy extends MIDlet implements CommandListener {
 	public static final boolean debug = false;
+	public static int rotations = 0;
 	
 	private Display display;
 	private GBCanvas gbCanvas;
 	private List cartList;
 	private TextField frameSkipField;
+	private TextField rotationField;
 	
 	private static Form logForm = new Form("log");
 	public static String lastLog = "";
@@ -74,6 +76,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 				cartList.append("Resume saved", null);
 			rs.closeRecordStore();
 			cartList.append("Set frame skip", null);
+			cartList.append("Set rotation", null);
 			cartList.append("Exit", null);
 			
 			if (debug)
@@ -117,13 +120,17 @@ public class MeBoy extends MIDlet implements CommandListener {
 				display.setCurrent(cartList);
 			}
 		} else if (label == "OK") {
-			int f = Integer.parseInt(frameSkipField.getString());
-			if (f < 0)
-				f = 0;
-			if (f > 59)
-				f = 59;
-			
-			GraphicsChip.maxFrameSkip = f;
+			if (frameSkipField != null) {
+				int f = Integer.parseInt(frameSkipField.getString());
+				if (f < 0)
+					f = 0;
+				if (f > 59)
+					f = 59;
+				GraphicsChip.maxFrameSkip = f;
+			}
+			if (rotationField != null) {
+				rotations = Integer.parseInt(rotationField.getString()) & 3;
+			}
 			GBCanvas.writeSettings();
 			display.setCurrent(cartList);
 		} else if (cart.equals("/-")) {
@@ -134,6 +141,13 @@ public class MeBoy extends MIDlet implements CommandListener {
 			Form f = new Form("Set frame skip");
 			frameSkipField = new TextField("Frame skip", Integer.toString(GraphicsChip.maxFrameSkip), 2, TextField.NUMERIC);
 			f.append(frameSkipField);
+			f.setCommandListener(this);
+			f.addCommand(new Command("OK", Command.OK, 0));
+			display.setCurrent(f);
+		} else if (cart.equals("/Set rotation")) {
+			Form f = new Form("Rotation");
+			rotationField = new TextField("Number of 90 deg turns", Integer.toString(rotations), 1, TextField.NUMERIC);
+			f.append(rotationField);
 			f.setCommandListener(this);
 			f.addCommand(new Command("OK", Command.OK, 0));
 			display.setCurrent(f);
