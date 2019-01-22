@@ -27,6 +27,7 @@
 
 import javax.microedition.lcdui.*;
 import javax.microedition.midlet.*;
+import javax.microedition.rms.*;
 
 /**
  The main class offers a list of games, read from the file "carts.txt".
@@ -39,6 +40,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 	private Display display;
 	private GBCanvas gbCanvas;
 	private List cartList;
+	private TextField frameSkipField;
 	
 	private static Form logForm = new Form("log");
 	public static String lastLog = "";
@@ -66,9 +68,18 @@ public class MeBoy extends MIDlet implements CommandListener {
 				cartList.append(sb.toString(), null);
 			
 			is.close();
+			cartList.append("-", null);
+			RecordStore rs = RecordStore.openRecordStore("suspended", true);
+			if (rs.getNumRecords() > 0)
+				cartList.append("Resume saved", null);
+			rs.closeRecordStore();
+			cartList.append("Set frame skip", null);
 			cartList.append("Exit", null);
+			
 			if (debug)
 				cartList.addCommand(new Command("time", Command.SCREEN, 1));
+			
+			GBCanvas.readSettings();
 			
 			cartList.setCommandListener(this);
 			display.setCurrent(cartList);
@@ -82,13 +93,17 @@ public class MeBoy extends MIDlet implements CommandListener {
 	public void pauseApp() {
 	}
 	
-	
 	public void destroyApp(boolean unconditional) {
 	}
 	
 	public void showLog() {
 		logForm.setCommandListener(this);
 		display.setCurrent(logForm);
+	}
+	
+	public void unloadCart() {
+		display.setCurrent(cartList);
+		gbCanvas = null;
 	}
 	
 	public void commandAction(Command c, Displayable s) {
@@ -101,9 +116,40 @@ public class MeBoy extends MIDlet implements CommandListener {
 			} else {
 				display.setCurrent(cartList);
 			}
+		} else if (label == "OK") {
+			int f = Integer.parseInt(frameSkipField.getString());
+			if (f < 0)
+				f = 0;
+			if (f > 59)
+				f = 59;
+			
+			GraphicsChip.maxFrameSkip = f;
+			GBCanvas.writeSettings();
+			display.setCurrent(cartList);
+		} else if (cart.equals("/-")) {
 		} else if (cart.equals("/Exit")) {
 			destroyApp(true);
 			notifyDestroyed();
+		} else if (cart.equals("/Set frame skip")) {
+			Form f = new Form("Set frame skip");
+			frameSkipField = new TextField("Frame skip", Integer.toString(GraphicsChip.maxFrameSkip), 2, TextField.NUMERIC);
+			f.append(frameSkipField);
+			f.setCommandListener(this);
+			f.addCommand(new Command("OK", Command.OK, 0));
+			display.setCurrent(f);
+		} else if (cart.equals("/Resume saved")) {
+			try {
+				gbCanvas = new GBCanvas(this);
+				display.setCurrent(gbCanvas);
+			} catch (Exception e) {
+				if (e.getMessage() != null)
+					log(e.getMessage());
+				else
+					log(e.getClass().getName());
+				showLog();
+				if (debug)
+					e.printStackTrace();
+			}
 		} else if (label == "time") {
 			gbCanvas = new GBCanvas(this, cart, true);
 			display.setCurrent(gbCanvas);
@@ -114,7 +160,11 @@ public class MeBoy extends MIDlet implements CommandListener {
 			} catch (Exception e) {
 				if (e.getMessage() != null)
 					log(e.getMessage());
+				else
+					log(e.getClass().getName());
 				showLog();
+				if (debug)
+					e.printStackTrace();
 			}
 		}
 	}

@@ -33,49 +33,108 @@ import javax.microedition.rms.*;
 public class GBCanvas extends Canvas implements CommandListener {
 	public MeBoy parent;
 	private Dmgcpu cpu;
-	private int w, h;
+	private int w, h, l, t;
 	private boolean clear = true;
-	boolean showFps;
+	boolean showFps = MeBoy.debug;
+	private boolean fullScreen;
 	
-	private int[] key = new int[] {KEY_NUM6, KEY_NUM4, KEY_NUM2, KEY_NUM8, KEY_NUM7, KEY_NUM9, KEY_POUND, KEY_STAR};
+	private Command pause = new Command("Pause", Command.SCREEN, 0);
+	private Command resume = new Command("Resume", Command.SCREEN, 0);
+	
+	private static int[] key = new int[] {KEY_NUM6, KEY_NUM4, KEY_NUM2, KEY_NUM8, KEY_NUM7, KEY_NUM9, KEY_POUND, KEY_STAR};
 	private static String[] keyName = {"right", "left", "up", "down", "a", "b", "select", "start"};
 	private int keySetCounter;
 	private boolean settingKeys;
 	
-	public GBCanvas(MeBoy p, String cart, boolean timer) {
-		parent = p;
-		
-		w = getWidth();
-		h = getHeight();
-		
-		readSettings();
-		
-		addCommand(new Command("Pause", Command.SCREEN, 0));
+	private String cartName;
+	
+	
+	private GBCanvas() {
+		addCommand(pause);
 		addCommand(new Command("Exit", Command.EXIT, 1));
-		
-		addCommand(new Command("Show framerate", Command.SCREEN, 10));
+		if (showFps)
+			addCommand(new Command("Hide framerate", Command.SCREEN, 10));
+		else
+			addCommand(new Command("Show framerate", Command.SCREEN, 10));
 		addCommand(new Command("Set buttons", Command.SCREEN, 11));
 		addCommand(new Command("Show log", Command.SCREEN, 12));
-		addCommand(new Command("Memory", Command.SCREEN, 14));
+		addCommand(new Command("Suspend", Command.SCREEN, 16));
+		addCommand(new Command("Full screen", Command.SCREEN, 17));
+		addCommand(new Command("Unload cart", Command.SCREEN, 2));
 		setCommandListener(this);
+	}
+	
+	public GBCanvas(MeBoy p) {
+		this();
+		parent = p;
+		
+		try {
+			RecordStore rs = RecordStore.openRecordStore("suspended", true);
+			byte[] b = rs.getRecord(1);
+			rs.closeRecordStore();
+			
+			StringBuffer sb = new StringBuffer();
+			int i = 0;
+			while (b[i] != 0) {
+				sb.append((char) b[i]);
+				i++;
+			}
+			cartName = sb.toString();
+			
+			cpu = new Dmgcpu(cartName, this, b, i+1);
+			
+			setDimensions();
+			
+			new Thread(cpu).start();
+		} catch (Throwable e) {
+			if (MeBoy.debug)
+				e.printStackTrace();
+			throw new RuntimeException("resumption error");
+		}
+	}
+	
+	public GBCanvas(MeBoy p, String cart, boolean timing) {
+		this();
+		parent = p;
+		cartName = cart;
 		
 		cpu = new Dmgcpu(cart, this);
+		cpu.timing = timing;
 		
-		MeBoy.log("freemem: " + Runtime.getRuntime().freeMemory());
+		if (cpu.hasBattery())
+			loadCartRam();
 		
-		if (timer) {
-			cpu.graphicsChip.frameSkip = 0x7fffffff;
-		}
+		setDimensions();
 		
 		new Thread(cpu).start();
 	}
 	
+	public void setDimensions() {
+		w = getWidth();
+		h = getHeight();
+		l = (w - 160) / 2;
+		int sh = showFps ? 160 : 144;
+		t = (h - sh) / 2;
+		
+		if (l < 0)
+			l = 0;
+		if (t < 0)
+			t = 0;
+		
+		cpu.graphicsChip.left = l;
+		cpu.graphicsChip.top = t;
+	}
+	
 	public void keyReleased(int keyCode) {
-		for (int i = 0; i < 8; i++)
+		for (int i = 0; i < 8; i++) {
 			if (keyCode == key[i]) {
-				cpu.padDown[i] = false;
+				cpu.buttonState |= 1 << i;
 			}
-		cpu.triggerInterruptIfEnabled(cpu.INT_P10);
+		}
+		if ((cpu.registers[0xff] & cpu.INT_P10) != 0) {
+			cpu.interruptsArmed = true;
+			cpu.registers[0x0f] |= cpu.INT_P10;
+		}
 	}
 	
 	public void keyPressed(int keyCode) {
@@ -84,70 +143,94 @@ public class GBCanvas extends Canvas implements CommandListener {
 			if (keySetCounter == 8) {
 				writeSettings();
 				settingKeys = false;
-				clear = true;
 			}
+			clear = true;
 			repaint();
 			return;
 		}
 		
-		for (int i = 0; i < 8; i++)
+		for (int i = 0; i < 8; i++) {
 			if (keyCode == key[i]) {
-				cpu.padDown[i] = true;
+				cpu.buttonState &= 0xff - (1<<i);
 			}
-		cpu.triggerInterruptIfEnabled(cpu.INT_P10);
+		}
+		
+		if ((cpu.registers[0xff] & cpu.INT_P10) != 0) {
+			cpu.interruptsArmed = true;
+			cpu.registers[0x0f] |= cpu.INT_P10;
+		}
 		
 		if (keyCode == KEY_NUM0 && MeBoy.debug)
-			showFps = !showFps;
+			cpu.debugSlow = !cpu.debugSlow;//showFps = !showFps;
 	}
 	
 	public void commandAction(Command c, Displayable s) {
 		try {
 			String label = c.getLabel();
 			if (label == "Exit") {
+				if (cpu.hasBattery())
+					saveCartRam();
 				parent.destroyApp(true);
 				parent.notifyDestroyed();
+			} else if (label == "Unload cart") {
+				if (cpu.hasBattery())
+					saveCartRam();
+				
+				parent.unloadCart();
+				Runtime.getRuntime().gc();
 			} else if (label == "Pause") {
-				removeCommand(c);
-				addCommand(new Command("Resume", Command.SCREEN, 0));
+				removeCommand(pause);
+				addCommand(resume);
 				
 				cpu.terminate = true;
 			} else if (label == "Resume" && !settingKeys) {
-				removeCommand(c);
-				addCommand(new Command("Pause", Command.SCREEN, 0));
+				removeCommand(resume);
+				addCommand(pause);
 				
 				new Thread(cpu).start();
-			} else if (label == "Memory") {
-				MeBoy.log("total: " + Runtime.getRuntime().totalMemory());
-				MeBoy.log("free: " + Runtime.getRuntime().freeMemory());
-				parent.showLog();
 			} else if (label == "Show framerate") {
 				removeCommand(c);
 				addCommand(new Command("Hide framerate", Command.SCREEN, 10));
 				showFps = true;
-				clear = true;
+				setDimensions();
 			} else if (label == "Hide framerate") {
 				removeCommand(c);
 				addCommand(new Command("Show framerate", Command.SCREEN, 10));
 				showFps = false;
-				clear = true;
+				setDimensions();
 			} else if (label == "Set buttons" && !settingKeys) {
 				settingKeys = true;
 				keySetCounter = 0;
-			} else if (label == "Show log") {
+			} else if (label == "Suspend" && !settingKeys) {
+				if (!cpu.terminate) {
+					removeCommand(pause);
+					addCommand(resume);
+					cpu.terminate = true;
+					Thread.sleep(100);
+				}
+				
+				suspend();
+			} else if (label == "Full screen" && !settingKeys) {
+				fullScreen = !fullScreen;
+				setFullScreenMode(fullScreen);
+				
+				setDimensions();
+			} else if (label == "Show log" && !settingKeys) {
+				MeBoy.log("memory: " + Runtime.getRuntime().freeMemory() + "/" + Runtime.getRuntime().totalMemory());
 				parent.showLog();
 			}
 		} catch (Throwable t) {
 			MeBoy.log(t.toString());
 		}
+		clear = true;
 		repaint();
 	}
 	
-	public final void repaintSmall() {
+	public final void redrawSmall() {
 		if (showFps)
-			repaint(0, 0, w, 160);
-		else {
-			repaint(0, 0, 160, 144);
-		}
+			repaint(l, t, 160, 144);
+		else
+			repaint(l, t, 160, 160);
 	}
 	
 	public final void showNotify() {
@@ -156,88 +239,167 @@ public class GBCanvas extends Canvas implements CommandListener {
 	}
 	
 	public final void paint(Graphics g) {
-		if (g.getClipWidth() == 160) {
-			cpu.graphicsChip.draw(g, 0, 0);
-		} else {
-			if (settingKeys) {
-				g.setColor(0x446688);
-				g.fillRect(0, 0, getWidth(), getHeight());
+		if (!clear) {
+			if (showFps) {
+				g.setClip(l, t+144, 80, 16);
 				g.setColor(-1);
-				g.drawString("press the", w/2, 18, 65);
-				g.drawString("button for", w/2, 36, 65);
-				g.drawString(keyName[keySetCounter], w/2, 54, 65);
-			} else {
-				if (clear) {
-					g.setColor(-1);
-					g.fillRect(0, 0, 160, 144);
-					g.setColor(0x446688);
-					g.fillRect(160, 0, w-160, 144);
-					g.fillRect(0, 144, w, h-144);
-					clear = false;
-				}
-				
-				if (showFps) {
-					g.setClip(0, 144, 100, 16);
-					g.setColor(-1);
-					g.fillRect(0, 144, 100, 16);
-					g.setColor(0);
-					if (cpu != null)
-						g.drawString(((10000 + (cpu.graphicsChip.lastFrameLength >> 1)) / cpu.graphicsChip.lastFrameLength) + "fps", 0, 144, 20);
-				}
-				
-				g.setClip(0, 0, 160, 144);
-				
-				if (cpu != null) {
-					cpu.graphicsChip.draw(g, 0, 0);
-				}
+				g.fillRect(l, t+144, 80, 16);
+				g.setColor(0);
+				g.drawString("skip: " + cpu.graphicsChip.lastSkipCount, l, t+144, 20);
 			}
+			g.setClip(l, t, 160, 144);
+			cpu.graphicsChip.draw(g);
+		} else if (settingKeys) {
+			g.setColor(0x446688);
+			g.fillRect(0, 0, w, h);
+			g.setColor(-1);
+			g.drawString("press the", w/2, h/2-18, 65);
+			g.drawString("button for", w/2, h/2, 65);
+			g.drawString(keyName[keySetCounter], w/2, h/2+18, 65);
+		} else {
+			if (g.getClipHeight() == h)
+				clear = false;
+			// full redraw
+			g.setColor(0x446688);
+			g.fillRect(0, 0, w, h);
+			g.setColor(-1);
+			g.fillRect(l, t, 160, 144);
+			
+			if (showFps) {
+				g.setClip(l, t+144, 80, 16);
+				g.setColor(-1);
+				g.fillRect(l, t+144, 80, 16);
+				g.setColor(0);
+				g.drawString("skip: " + cpu.graphicsChip.lastSkipCount, l, t+144, 20);
+			}
+			
+			g.setClip(l, t, 160, 144);
+			cpu.graphicsChip.draw(g);
 		}
 	}
 	
-	void writeSettings() {
-		try {
-			RecordStore rs = RecordStore.openRecordStore("set", true);
-			
-			byte[] b = new byte[32];
-			
-			for (int i = 0; i < 8; i++)
-				setInt(b, i*4, key[i]);
-			
-			if (rs.getNumRecords() == 0) {
-				rs.addRecord(b, 0, 32);
-			} else {
-				rs.setRecord(1, b, 0, 32);
-			}
-			rs.closeRecordStore();
-		} catch (Throwable e) {
-		}
-	}
-	
-	void setInt(byte[] b, int i, int v) {
+	public static final void setInt(byte[] b, int i, int v) {
 		b[i++] = (byte) (v >> 24);
 		b[i++] = (byte) (v >> 16);
 		b[i++] = (byte) (v >> 8);
 		b[i++] = (byte) (v);
 	}
 	
-	int getInt(byte[] b, int i) {
+	public static final int getInt(byte[] b, int i) {
 		int r = b[i++] & 0xFF;
 		r = (r << 8) + (b[i++] & 0xFF);
 		r = (r << 8) + (b[i++] & 0xFF);
 		return (r << 8) + (b[i++] & 0xFF);
 	}
 	
-	void readSettings() {
+	public static final void writeSettings() {
+		try {
+			RecordStore rs = RecordStore.openRecordStore("set", true);
+			
+			byte[] b = new byte[36];
+			
+			for (int i = 0; i < 8; i++)
+				setInt(b, i * 4, key[i]);
+			setInt(b, 32, GraphicsChip.maxFrameSkip);
+			
+			if (rs.getNumRecords() == 0) {
+				rs.addRecord(b, 0, 36);
+			} else {
+				rs.setRecord(1, b, 0, 36);
+			}
+			rs.closeRecordStore();
+		} catch (Exception e) {
+			if (MeBoy.debug)
+				e.printStackTrace();
+		}
+	}
+	
+	public static final void readSettings() {
 		try {
 			RecordStore rs = RecordStore.openRecordStore("set", true);
 			if (rs.getNumRecords() > 0) {
 				byte[] b = rs.getRecord(1);
 				
 				for (int i = 0; i < 8; i++)
-					key[i] = getInt(b, i*4);
+					key[i] = getInt(b, i * 4);
+				GraphicsChip.maxFrameSkip = getInt(b, 32);
+			} else {
+				writeSettings();
 			}
 			rs.closeRecordStore();
-		} catch (Throwable e) {
+		} catch (Exception e) {
+			if (MeBoy.debug)
+				e.printStackTrace();
+		}
+	}
+	
+	private final void saveCartRam() {
+		try {
+			RecordStore rs = RecordStore.openRecordStore(cartName, true);
+			
+			byte[][] ram = cpu.cartRam;
+			
+			int bankCount = ram.length;
+			int bankSize = ram[0].length;
+			int size = bankCount * bankSize;
+			
+			byte[] b = new byte[size];
+			
+			for (int i = 0; i < bankCount; i++)
+				System.arraycopy(ram[i], 0, b, i * bankSize, bankSize);
+			
+			if (rs.getNumRecords() == 0) {
+				rs.addRecord(b, 0, size);
+			} else {
+				rs.setRecord(1, b, 0, size);
+			}
+			
+			rs.closeRecordStore();
+		} catch (Exception e) {
+			if (MeBoy.debug)
+				e.printStackTrace();
+		}
+	}
+	
+	private final void loadCartRam() {
+		try {
+			RecordStore rs = RecordStore.openRecordStore(cartName, true);
+			
+			if (rs.getNumRecords() > 0) {
+				byte[][] ram = cpu.cartRam;
+				int bankCount = ram.length;
+				int bankSize = ram[0].length;
+				int size = bankCount * bankSize;
+				
+				byte[] b = rs.getRecord(1);
+				
+				for (int i = 0; i < bankCount; i++)
+					System.arraycopy(b, i * bankSize, ram[i], 0, bankSize);
+			}
+			rs.closeRecordStore();
+		} catch (Exception e) {
+			if (MeBoy.debug)
+				e.printStackTrace();
+		}
+	}
+	
+	private final void suspend() {
+		try {
+			RecordStore rs = RecordStore.openRecordStore("suspended", true);
+			
+			byte[] b = cpu.flatten();
+			
+			if (rs.getNumRecords() == 0) {
+				rs.addRecord(b, 0, b.length);
+			} else {
+				rs.setRecord(1, b, 0, b.length);
+			}
+			
+			rs.closeRecordStore();
+		} catch (Exception e) {
+			if (MeBoy.debug)
+				e.printStackTrace();
 		}
 	}
 }
+

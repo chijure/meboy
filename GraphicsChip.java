@@ -55,18 +55,20 @@ public class GraphicsChip {
 	boolean bgEnabled = true;
 	boolean winEnabled = true;
 	boolean spritesEnabled = true;
+	boolean spritesEnabledThisFrame = true;
 	
 	
 	private Graphics g;
 	
-	/** The current frame skip value */
-	int frameSkip = 4;
-	private boolean skipping = true;
+	// skipping, timing:
+	public static int maxFrameSkip = 3;
+	
+	public int timer;
+	private boolean skipping = true; // until graphics is set
+	private int skipCount;
 	
 	// some statistics
-	int framesDrawn, lastFrameLength, framesDrawnOrSkipped;
-	int[] lastFrameTime = new int[10];
-	private int lastDrawOrSkip;
+	int lastSkipCount;
 	
 	/** The current frame has finished drawing */
 	boolean frameDone = false;
@@ -90,8 +92,13 @@ public class GraphicsChip {
 	// tiles & image cache
 	private Image[] tileImage = new Image[384*12];
 	private boolean[] tileTransparent = new boolean[384*12];
+	private boolean[] tileReadState = new boolean[384];
 	
 	private int[] tempPix = new int[64];
+	
+	public int left, top;
+	
+	private boolean screenFilled;
 	
 	
 	/** Create a new GraphicsChip connected to the speicfied CPU */
@@ -101,21 +108,69 @@ public class GraphicsChip {
 		cpu.memory[4] = videoRam;
 	}
 	
+	public int unflatten(byte[] flatState, int offset) {
+		System.arraycopy(flatState, offset, videoRam, 0, 0x2000);
+		offset += 0x2000;
+		
+		for (int i = 0; i < 12; i++) {
+			palette[i] = GBCanvas.getInt(flatState, offset);
+			offset += 4;
+		}
+		
+		bgEnabled = (flatState[offset++] != 0);
+		winEnabled = (flatState[offset++] != 0);
+		spritesEnabled = (flatState[offset++] != 0);
+		
+		bgWindowDataSelect = (flatState[offset++] != 0);
+		doubledSprites = (flatState[offset++] != 0);
+		hiBgTileMapAddress = (flatState[offset++] != 0);
+		
+		return offset;
+	}
+	
+	public int flatten(byte[] flatState, int offset) {
+		System.arraycopy(videoRam, 0, flatState, offset, 0x2000);
+		offset += 0x2000;
+		
+		for (int j = 0; j < 12; j++) {
+			GBCanvas.setInt(flatState, offset, palette[j]);
+			offset += 4;
+		}
+		
+		flatState[offset++] = (byte) (bgEnabled ? 1 : 0);
+		flatState[offset++] = (byte) (winEnabled ? 1 : 0);
+		flatState[offset++] = (byte) (spritesEnabled ? 1 : 0);
+		flatState[offset++] = (byte) (bgWindowDataSelect ? 1 : 0);
+		flatState[offset++] = (byte) (doubledSprites ? 1 : 0);
+		flatState[offset++] = (byte) (hiBgTileMapAddress ? 1 : 0);
+		
+		return offset;
+	}
+	
 	/** Writes data to the specified video RAM address */
 	public final void addressWrite(int addr, byte data) {
 		if (addr < 0x1800) { // Bkg Tile data area
-			int min = (addr >> 4);
-			for (int r = 0; r < 12; r++) {
-				tileImage[r*384+min] = null;
-				tileTransparent[r*384+min] = false;
+			int tileIndex = (addr >> 4);
+			
+			if (tileReadState[tileIndex]) {
+				int r = 4224+tileIndex; // 384*11=4224
+				while (r >= 0) {
+					tileImage[r] = null;
+					tileTransparent[r] = false;
+					r -= 384;
+				}
+				tileReadState[tileIndex] = false;
 			}
 		}
 		videoRam[addr] = data;
 	}
 	
-	/** Invalidate all tiles in the tile cache */
-	public final void invalidateAll() {
-		for (int r = 384*12; --r >= 0; ) {
+	/** Invalidate all tiles in the tile cache for the given palette */
+	public final void invalidateAll(int palette) {
+		int start = palette * 384 * 4;
+		int stop = (palette+1) * 384 * 4;
+		
+		for (int r = start; r < stop; r++) {
 			tileImage[r] = null;
 			tileTransparent[r] = false;
 		}
@@ -123,15 +178,15 @@ public class GraphicsChip {
 	
 	// called by notifyscanline, and draw
 	private final void drawSprites(int priorityFlag) {
-		if (!spritesEnabled)
+		if (!spritesEnabledThisFrame)
 			return;
 		
 		for (int i = 0; i < 40; i++) {
 			int attributes = 0xff & cpu.oam[i * 4 + 3];
 			
 			if ((attributes & 0x80) == priorityFlag) {
-				int spriteX = (0xff & cpu.oam[i * 4 + 1]) - 8;
-				int spriteY = (0xff & cpu.oam[i * 4]) - 16;
+				int spriteX = (0xff & cpu.oam[i * 4 + 1]) - 8 + left;
+				int spriteY = (0xff & cpu.oam[i * 4]) - 16 + top;
 				int tileNum = (0xff & cpu.oam[i * 4 + 2]);
 				
 				if (doubledSprites) {
@@ -176,23 +231,23 @@ public class GraphicsChip {
 		}
 		
 		if (line == 0) {
+			g.setClip(left, top, 160, 144);
 			g.setColor(palette[0]);
-			g.fillRect(0, 0, 160, 144);
+			g.fillRect(left, top, 160, 144);
 			
 			drawSprites(0x80);
 			
 			windowStopLine = 144;
 			windowEnableThisLine = winEnabled;
+			screenFilled = false;
 		}
 		
 		if (windowEnableThisLine) {
 			if (!winEnabled) {
-				windowStopLine = line;
+				windowStopLine = line & 0xff;
 				windowEnableThisLine = false;
 			}
 		}
-		
-		line &= 0xff;
 		
 		// Fix to screwed up status bars.  Record which data area is selected on the
 		// first line the window is to be displayed.  Will work unless this is changed
@@ -205,85 +260,100 @@ public class GraphicsChip {
 		if (!bgEnabled)
 			return;
 		
-		int yPixelOfs = cpu.registers[0x42] & 7;
-		
-		if (((yPixelOfs + line) % 8 == 4) || (line == 0)) {
-			if ((line >= 144) && (line < 152))
-				notifyScanline(line + 8);
-			
+		if ((((cpu.registers[0x42] + line) & 7) == 7) || (line == 144)) {
 			int xPixelOfs = cpu.registers[0x43] & 7;
+			int yPixelOfs = cpu.registers[0x42] & 7;
 			int xTileOfs = (cpu.registers[0x43] & 0xff) >> 3;
 			int yTileOfs = (cpu.registers[0x42] & 0xff) >> 3;
-			int bgStartAddress, tileNum;
 			
-			int y = (line + yPixelOfs) >> 3;
+			int bgStartAddress = hiBgTileMapAddress ? 0x1c00 : 0x1800; 
+			int tileNum;
 			
-			if (hiBgTileMapAddress) {
-				bgStartAddress = 0x1C00;
+			int screenY = (line & 0xf8) - yPixelOfs + top;
+			int screenX = -xPixelOfs + left;
+			int screenRight = 160 + left;
+			
+			int tileY = (line >> 3) + yTileOfs;
+			int tileX = xTileOfs;
+			
+			int tileNumAddress;
+			int memStart = bgStartAddress + ((tileY & 0x1f) << 5);
+			
+			if (bgWindowDataSelect) {
+				while (screenX < screenRight) {
+					tileNum = videoRam[memStart + (tileX++ & 0x1f)] & 0xff;
+					
+					if (!tileTransparent[tileNum]) {
+						Image im = tileImage[tileNum];
+						if (im == null) {
+							im = updateImage(tileNum, 0);
+						}
+						
+						g.drawImage(im, screenX, screenY, 20);
+					}
+					
+					screenX += 8;
+				}
 			} else {
-				bgStartAddress = 0x1800;
-			}
-			
-			int tileNumAddress, vidMemAddr;
-			
-			int screenY = y * 8 - yPixelOfs;
-			int screenX = - xPixelOfs;
-			int memStart = bgStartAddress + (((y + yTileOfs) & 0x1f) << 5);
-			
-			for (int x = 0; x < 21; x++) {
-				tileNumAddress = memStart + ((x + xTileOfs) & 0x1f);
-				
-				if (bgWindowDataSelect) {
-					tileNum = videoRam[tileNumAddress] & 0xff;
-				} else {
-					tileNum = 256 + videoRam[tileNumAddress];
+				while (screenX < screenRight) {
+					tileNum = 256 + videoRam[memStart + (tileX++ & 0x1f)];
+					
+					if (!tileTransparent[tileNum]) {
+						Image im = tileImage[tileNum];
+						if (im == null) {
+							im = updateImage(tileNum, 0);
+						}
+						
+						g.drawImage(im, screenX, screenY, 20);
+					}
+					
+					screenX += 8;
 				}
-				
-				if (!tileTransparent[tileNum])
-					draw(tileNum, screenX, screenY);
-				screenX += 8;
 			}
+			
+			if (screenY >= 136+top)
+				screenFilled = true;
+		}
+		if (line == 143 && !screenFilled) {
+			notifyScanline(144); // fudge to update last part of screen when scrolling in y direction
 		}
 	}
 	
-	public final void drawOrSkip() {
-		if (skipping && g != null) {
-			framesDrawnOrSkipped++;
-			if (framesDrawnOrSkipped % frameSkip == 0)
-				skipping = false;
-		} else {
-			frameDone = false;
-			cpu.screen.repaintSmall();
-			try {
-				int now = (int) System.currentTimeMillis();
-				if (lastDrawOrSkip == 0)
-					lastDrawOrSkip = now - 1000;
-				
-				// throttle speed if running faster than 17 ms per (skipped/nonskipped) frame
-				int delay = lastDrawOrSkip + frameSkip * 17 - now;
-				if (delay > 0) {
-					java.lang.Thread.sleep(delay);
-					lastDrawOrSkip += 17 * frameSkip;
-				} else
-					lastDrawOrSkip = now;
-				
-				// wait for update to be done
-				while (!frameDone) {
-					java.lang.Thread.sleep(1);
-				}
-			} catch (InterruptedException exc) {}
-			
-			skipping = (framesDrawnOrSkipped % frameSkip != 0);
-		}
-	}
-	
-	public final void draw(Graphics g, int startX, int startY) {
-		this.g = g;
-		framesDrawn++;
-		framesDrawnOrSkipped++;
+	public final void vBlank() {
+		timer += 17;
 		
-		lastFrameLength = (int) System.currentTimeMillis() - lastFrameTime[framesDrawn % 10];
-		lastFrameTime[framesDrawn % 10] += lastFrameLength;
+		if (skipping && g != null) { // if g == null, we need to do a redraw to set it
+			skipCount++;
+			if (skipCount >= maxFrameSkip) {
+				// can't keep up, draw and reset timer
+				skipping = false;
+				timer = (int) System.currentTimeMillis();
+			} else
+				skipping = (timer - ((int) System.currentTimeMillis()) < 0);
+			return;
+		}
+		
+		lastSkipCount = skipCount;
+		frameDone = false;
+		cpu.screen.repaint();
+		while (!frameDone && !cpu.terminate) {
+			Thread.yield();
+		}
+		
+		// theoretically, should sleep if too far ahead
+		
+		int now = (int) System.currentTimeMillis();
+		
+		if (maxFrameSkip == 0)
+			skipping = false;
+		else
+			skipping = timer - now < 0;
+		
+		skipCount = 0;
+	}
+	
+	public final void draw(Graphics g) {
+		this.g = g;
 		
 		/* Draw window */
 		if (winEnabled) {
@@ -299,16 +369,19 @@ public class GraphicsChip {
 			wy = (cpu.registers[0x4A] & 0xff);
 			
 			g.setColor(palette[0]);
-			g.fillRect(wx, wy, 160-wx, 144-wy);
+			g.fillRect(wx+left, wy+top, 160-wx, windowStopLine-wy);
 			
 			int tileNum, tileAddress;
 			int attribData, attribs, tileDataAddress;
+			int screenY = wy + top;
 			
-			for (int y = 0; y < 19 - (wy / 8); y++) {
+			for (int y = 0; y < 19 - (wy >> 3); y++) {
 				if (wy + y * 8 >= windowStopLine)
 					break;
 				
-				for (int x = 0; x < 21 - (wx / 8); x++) {
+				int screenX = wx + left;
+				
+				for (int x = 0; x < 21 - (wx >> 3); x++) {
 					tileAddress = windowStartAddress + (y * 32) + x;
 					
 					if (!savedWindowDataSelect) {
@@ -317,15 +390,25 @@ public class GraphicsChip {
 						tileNum = videoRam[tileAddress] & 0xff;
 					}
 					
-					if (!tileTransparent[tileNum])
-						draw(tileNum, wx + x * 8, wy + y * 8);
+					if (!tileTransparent[tileNum]) {
+						Image im = tileImage[tileNum];
+						if (im == null) {
+							im = updateImage(tileNum, 0);
+						}
+						
+						g.drawImage(im, screenX, screenY, 20);
+					}
+					
+					screenX += 8;
 				}
+				screenY += 8;
 			}
 		}
 		
 		drawSprites(0);
 		
 		frameDone = true;
+		spritesEnabledThisFrame = spritesEnabled;
 	}
 	
 	/** Create the image of a tile in the tile cache by reading the relevant data from video
@@ -334,39 +417,34 @@ public class GraphicsChip {
 	private final Image updateImage(int tileIndex, int attribs) {
 		int index = tileIndex + 384 * attribs;
 		
-		int px, py;
 		int rgbValue;
 		int offset = tileIndex << 4;
 		
 		int pixix = 0;
-		int paletteStart;
-		if (attribs == 0)
-			paletteStart = 0;
-		else if (attribs >= 8)
-			paletteStart = 8;
-		else
-			paletteStart = 4;
-		
+		int paletteStart = attribs & 0xf4;
 		boolean transparent = true;
 		
+		int lower, upper;
+		int entryNumber;
+		
+		boolean flipx = (attribs & TILE_FLIPX) != 0;
+		boolean flipy = (attribs & TILE_FLIPY) != 0;
+		
 		for (int y = 0; y < 8; y++) {
-			if ((attribs & TILE_FLIPY) != 0) {
-				py = 7 - y;
+			if (flipy) {
+				lower = videoRam[offset + ((7 - y) << 1)];
+				upper = videoRam[offset + ((7 - y) << 1) + 1] << 1;
 			} else {
-				py = y;
+				lower = videoRam[offset + (y << 1)];
+				upper = videoRam[offset + (y << 1) + 1] << 1;
 			}
 			
 			for (int x = 0; x < 8; x++) {
-				if ((attribs & TILE_FLIPX) != 0) {
-					px = 7 - x;
+				if (flipx) {
+					entryNumber = ((upper >> x) & 2) + ((lower >> x) & 1);
 				} else {
-					px = x;
+					entryNumber = ((upper >> (7-x)) & 2) + ((lower >> (7-x)) & 1);
 				}
-				
-				int pixelColorLower = (videoRam[offset + (py * 2)] & (0x80 >> px)) >> (7 - px);
-				int pixelColorUpper = (videoRam[offset + (py * 2) + 1] & (0x80 >> px)) >> (7 - px);
-				
-				int entryNumber = (pixelColorUpper * 2) + pixelColorLower;
 				
 				if (entryNumber == 0) {
 					tempPix[pixix++] = 0;
@@ -376,20 +454,14 @@ public class GraphicsChip {
 				}
 			}
 		}
+		
 		tileTransparent[index] = transparent;
 		tileImage[index] = Image.createRGBImage(tempPix, 8, 8, true);
+		tileReadState[tileIndex] = true;
+		
 		return tileImage[index];
 	}
 	
-	private final void draw(int tileIndex, int left, int top) {
-		Image im = tileImage[tileIndex];
-		if (im == null) {
-			im = updateImage(tileIndex, 0);
-		}
-		
-		g.drawImage(im, left, top, 20);
-	}
-
 	private final void draw(int tileIndex, int left, int top, int attribs) {
 		int ix = tileIndex + 384 * attribs;
 		
