@@ -37,60 +37,54 @@ The main class offers a list of games, read from the file "carts.txt".
 public class MeBoy extends MIDlet implements CommandListener {
 	public static final boolean debug = false;
 	public static int rotations = 0;
+	public static int lazyLoadingThreshold = 64; // number of banks, each 0x4000 bytes = 16kB
+	public static int suspendCounter = 1; // next index for saved games
+	public static String[] suspendIndex = new String[0];
 	
-	private Display display;
+	private List mainMenu;
+	
+	private static Display display;
 	private GBCanvas gbCanvas;
 	private List cartList;
+	private List suspendList;
+	private Form settingsForm;
+	
 	private TextField frameSkipField;
 	private TextField rotationField;
+	private TextField loadThresholdField;
 	
 	private static Form logForm = new Form("log");
 	public static String lastLog = "";
 	
+	private static MeBoy instance;
+	
+	
 	public void startApp() {
+		instance = this;
 		display = Display.getDisplay(this);
 		logForm.addCommand(new Command("Return", Command.BACK, 0));
-		cartList = new List("Select Game", List.IMPLICIT);
 		
-		StringBuffer sb = new StringBuffer();
+		GBCanvas.readSettings();
 		
 		try {
-			java.io.InputStream is = getClass().getResourceAsStream("/carts.txt");
-			int c;
-			
-			while ((c = is.read()) != -1) {
-				if (c >= 32)
-					sb.append((char) c);
-				else if (sb.length() > 0) {
-					cartList.append(sb.toString(), null);
-					sb.setLength(0);
-				}
-			}
-			if (sb.length() > 0)
-				cartList.append(sb.toString(), null);
-			
-			is.close();
-			cartList.append("-", null);
-			RecordStore rs = RecordStore.openRecordStore("suspended", true);
-			if (rs.getNumRecords() > 0)
-				cartList.append("Resume saved", null);
+			// copy previous version's suspended game
+			RecordStore rs = RecordStore.openRecordStore("suspended", false);
+			byte[] b = rs.getRecord(1);
 			rs.closeRecordStore();
-			cartList.append("Set frame skip", null);
-			cartList.append("Set rotation", null);
-			cartList.append("Exit", null);
 			
-			if (debug)
-				cartList.addCommand(new Command("time", Command.SCREEN, 1));
+			RecordStore.deleteRecordStore("suspended");
 			
-			GBCanvas.readSettings();
+			String newName = suspendCounter++ + ": (from 1.1/1.2)";
+			rs = RecordStore.openRecordStore("s" + newName, true);
+			rs.addRecord(b, 0, b.length);
+			rs.closeRecordStore();
 			
-			cartList.setCommandListener(this);
-			display.setCurrent(cartList);
+			addSuspendedGame(newName);
 		} catch (Exception e) {
-			MeBoy.log("cartlist error");
-			MeBoy.log(e.toString());
-			showLog();
+			// no problem, probably just no suspended game from previous game
 		}
+		
+		mainMenuAction();
 	}
 	
 	public void pauseApp() {
@@ -99,95 +93,226 @@ public class MeBoy extends MIDlet implements CommandListener {
 	public void destroyApp(boolean unconditional) {
 	}
 	
-	public void showLog() {
-		logForm.setCommandListener(this);
+	public static void showLog() {
+		logForm.setCommandListener(instance);
 		display.setCurrent(logForm);
 	}
 	
 	public void unloadCart() {
-		display.setCurrent(cartList);
+		mainMenuAction();
 		gbCanvas = null;
 	}
 	
-	public void commandAction(Command c, Displayable s) {
-		String cart = "/" + cartList.getString(cartList.getSelectedIndex());
-		String label = c.getLabel();
-		
-		if (label == "Return") {
-			if (gbCanvas != null) {
-				display.setCurrent(gbCanvas);
-			} else {
-				display.setCurrent(cartList);
-			}
-		} else if (label == "OK") {
-			if (frameSkipField != null) {
-				int f = Integer.parseInt(frameSkipField.getString());
-				if (f < 0)
-					f = 0;
-				if (f > 59)
-					f = 59;
-				GraphicsChip.maxFrameSkip = f;
-			}
-			if (rotationField != null) {
-				rotations = Integer.parseInt(rotationField.getString()) & 3;
-			}
-			GBCanvas.writeSettings();
-			display.setCurrent(cartList);
-		} else if (cart.equals("/-")) {
-		} else if (cart.equals("/Exit")) {
-			destroyApp(true);
-			notifyDestroyed();
-		} else if (cart.equals("/Set frame skip")) {
-			Form f = new Form("Set frame skip");
-			frameSkipField = new TextField("Frame skip", Integer.toString(GraphicsChip.maxFrameSkip), 2, TextField.NUMERIC);
-			f.append(frameSkipField);
-			f.setCommandListener(this);
-			f.addCommand(new Command("OK", Command.OK, 0));
-			display.setCurrent(f);
-		} else if (cart.equals("/Set rotation")) {
-			Form f = new Form("Rotation");
-			rotationField = new TextField("Number of 90 deg turns", Integer.toString(rotations), 1, TextField.NUMERIC);
-			f.append(rotationField);
-			f.setCommandListener(this);
-			f.addCommand(new Command("OK", Command.OK, 0));
-			display.setCurrent(f);
-		} else if (cart.equals("/Resume saved")) {
+	private void mainMenuAction() {
+		mainMenu = new List("MeBoy 1.3", List.IMPLICIT);
+		mainMenu.append("New Game", null);
+		if (suspendIndex.length > 0)
+			mainMenu.append("Resume Game", null);
+		mainMenu.append("Settings", null);
+		mainMenu.append("Show log", null);
+		mainMenu.append("Exit", null);
+		mainMenu.setCommandListener(this);
+		display.setCurrent(mainMenu);
+	}
+	
+	private void newGameAction() {
+		if (cartList == null) {
+			cartList = new List("Select Game", List.IMPLICIT);
+			StringBuffer sb = new StringBuffer();
+			
 			try {
-				gbCanvas = new GBCanvas(this);
-				display.setCurrent(gbCanvas);
+				java.io.InputStream is = getClass().getResourceAsStream("/carts.txt");
+				int c;
+				
+				while ((c = is.read()) != -1) {
+					if (c >= 32)
+						sb.append((char) c);
+					else if (sb.length() > 0) {
+						cartList.append(sb.toString(), null);
+						sb.setLength(0);
+					}
+				}
+				if (sb.length() > 0)
+					cartList.append(sb.toString(), null);
+				
+				is.close();
+				
+				cartList.addCommand(new Command("Return", Command.BACK, 1));
+				if (debug)
+					cartList.addCommand(new Command("time", Command.SCREEN, 2));
+				
+				cartList.setCommandListener(this);
+				display.setCurrent(cartList);
 			} catch (Exception e) {
-				if (e.getMessage() != null)
-					log(e.getMessage());
-				else
-					log(e.getClass().getName());
+				log("cartlist error:");
+				log(e.toString());
 				showLog();
 				if (debug)
 					e.printStackTrace();
 			}
-		} else if (label == "time") {
-			gbCanvas = new GBCanvas(this, cart, true);
-			display.setCurrent(gbCanvas);
 		} else {
+			display.setCurrent(cartList);
+		}
+	}
+	
+	private void resumeGameAction() {
+		if (suspendIndex.length == 0) {
+			mainMenuAction();
+			return;
+		}
+		suspendList = new List("Select Game", List.IMPLICIT);
+		
+		for (int i = 0; i < suspendIndex.length; i++)
+			suspendList.append(suspendIndex[i], null);
+		
+		suspendList.addCommand(new Command("Delete", Command.SCREEN, 2));
+		suspendList.addCommand(new Command("Duplicate", Command.SCREEN, 2));
+		suspendList.addCommand(new Command("Return", Command.BACK, 1));
+		suspendList.setCommandListener(this);
+		display.setCurrent(suspendList);
+	}
+	
+	public void commandAction(Command com, Displayable s) {
+		String label = com.getLabel();
+		
+		if ("".equals(label) && s == mainMenu) {
+			String item = mainMenu.getString(mainMenu.getSelectedIndex());
+			if (item == "New Game") {
+				newGameAction();
+			} else if (item == "Resume Game") {
+				resumeGameAction();
+			} else if (item == "Settings") {
+				settingsForm = new Form("Settings");
+				
+				frameSkipField = new TextField("Frame skip", Integer.toString(GraphicsChip.maxFrameSkip), 2, TextField.NUMERIC);
+				settingsForm.append(frameSkipField);
+				rotationField = new TextField("Number of 90 deg turns", Integer.toString(rotations), 1, TextField.NUMERIC);
+				settingsForm.append(rotationField);
+				loadThresholdField = new TextField("Max number of 16kB banks to load", Integer.toString(lazyLoadingThreshold), 3, TextField.NUMERIC);
+				settingsForm.append(loadThresholdField);
+				
+				settingsForm.addCommand(new Command("Save", Command.OK, 1));
+				settingsForm.setCommandListener(this);
+				display.setCurrent(settingsForm);
+			} else if (item == "Show log") {
+				log("free memory: " + Runtime.getRuntime().freeMemory() + "/" + Runtime.getRuntime().totalMemory());
+				showLog();
+			} else if (item == "Exit") {
+				destroyApp(true);
+				notifyDestroyed();
+			}
+		} else if ("".equals(label) && s == cartList) {
+			String cart = cartList.getString(cartList.getSelectedIndex());
 			try {
 				gbCanvas = new GBCanvas(this, cart, false);
 				display.setCurrent(gbCanvas);
 			} catch (Exception e) {
-				if (e.getMessage() != null)
-					log(e.getMessage());
-				else
-					log(e.getClass().getName());
+				log("newgame error:");
+				log(e.toString());
 				showLog();
 				if (debug)
 					e.printStackTrace();
 			}
+		} else if (label == "time" && s == cartList) {
+			String cart = cartList.getString(cartList.getSelectedIndex());
+			try {
+				gbCanvas = new GBCanvas(this, cart, true);
+				display.setCurrent(gbCanvas);
+			} catch (Exception e) {
+				log("timing error:");
+				log(e.toString());
+				showLog();
+				if (debug)
+					e.printStackTrace();
+			}
+		} else if ("".equals(label) && s == suspendList) {
+			try {
+				gbCanvas = new GBCanvas(this, suspendIndex[suspendList.getSelectedIndex()]);
+				display.setCurrent(gbCanvas);
+			} catch (Exception e) {
+				log("resumption error:");
+				log(e.toString());
+				showLog();
+				if (debug)
+					e.printStackTrace();
+			}
+		} else if (label == "Delete") {
+			try {
+				int index = suspendList.getSelectedIndex();
+				String name = suspendIndex[index];
+				
+				// update index:
+				String[] oldIndex = suspendIndex;
+				suspendIndex = new String[oldIndex.length-1];
+				System.arraycopy(oldIndex, 0, suspendIndex, 0, index);
+				System.arraycopy(oldIndex, index+1, suspendIndex, index, suspendIndex.length-index);
+				GBCanvas.writeSettings();
+				
+				// delete the state itself
+				RecordStore.deleteRecordStore("s" + name);
+			} catch (Exception e) {
+				log("deletion error:");
+				log(e.toString());
+				showLog();
+				if (debug)
+					e.printStackTrace();
+			}
+			resumeGameAction();
+		} else if (label == "Duplicate") {
+			try {
+				int index = suspendList.getSelectedIndex();
+				String oldName = suspendIndex[index];
+				String newName = suspendCounter++ + oldName.substring(oldName.indexOf(':'));
+				
+				RecordStore rs = RecordStore.openRecordStore("s" + oldName, true);
+				byte[] b = rs.getRecord(1);
+				rs.closeRecordStore();
+				
+				rs = RecordStore.openRecordStore("s" + newName, true);
+				rs.addRecord(b, 0, b.length);
+				rs.closeRecordStore();
+				
+				addSuspendedGame(newName);
+				resumeGameAction();
+			} catch (Exception e) {
+				log("duplication error:");
+				log(e.toString());
+				showLog();
+				if (debug)
+					e.printStackTrace();
+			}
+		} else if (label == "Return") {
+			if (gbCanvas != null) {
+				display.setCurrent(gbCanvas);
+			} else {
+				mainMenuAction();
+			}
+		} else if (s == settingsForm) {
+			int f = Integer.parseInt(frameSkipField.getString());
+			GraphicsChip.maxFrameSkip = Math.max(Math.min(f, 59), 0);
+			rotations = Integer.parseInt(rotationField.getString()) & 3;
+			lazyLoadingThreshold = Math.max(Integer.parseInt(loadThresholdField.getString()), 20);
+			GBCanvas.writeSettings();
+			display.setCurrent(mainMenu);
 		}
 	}
 	
 	public static void log(String s) {
+		if (s == null)
+			return;
 		logForm.append(s + '\n');
 		lastLog = s;
 		if (debug)
 			System.out.println(s);
+	}
+	
+	// name should include number prefix
+	public static void addSuspendedGame(String name) {
+		String[] oldIndex = suspendIndex;
+		suspendIndex = new String[oldIndex.length+1];
+		System.arraycopy(oldIndex, 0, suspendIndex, 0, oldIndex.length);
+		suspendIndex[oldIndex.length] = name;
+		GBCanvas.writeSettings();
 	}
 }
 

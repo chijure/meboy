@@ -37,6 +37,8 @@ public class GBCanvas extends Canvas implements CommandListener {
 	private int w, h, l, t, sw, sh, trans;
 	private boolean clear = true;
 	boolean showFps = MeBoy.debug;
+	private int[] previousTime = new int[4];
+	private int previousTimeIx;
 	private boolean fullScreen;
 	
 	private Command pause = new Command("Pause", Command.SCREEN, 0);
@@ -48,11 +50,13 @@ public class GBCanvas extends Canvas implements CommandListener {
 	private boolean settingKeys;
 	
 	private String cartName;
+	private String suspendName;
 	
 	private Image buf;
 	private Graphics bufg;
 	
 	
+	// Common constructor
 	private GBCanvas() {
 		addCommand(pause);
 		addCommand(new Command("Exit", Command.EXIT, 1));
@@ -61,7 +65,6 @@ public class GBCanvas extends Canvas implements CommandListener {
 		else
 			addCommand(new Command("Show framerate", Command.SCREEN, 10));
 		addCommand(new Command("Set buttons", Command.SCREEN, 11));
-		addCommand(new Command("Show log", Command.SCREEN, 12));
 		addCommand(new Command("Suspend", Command.SCREEN, 16));
 		addCommand(new Command("Full screen", Command.SCREEN, 17));
 		addCommand(new Command("Unload cart", Command.SCREEN, 2));
@@ -73,35 +76,32 @@ public class GBCanvas extends Canvas implements CommandListener {
 		}
 	}
 	
-	public GBCanvas(MeBoy p) {
+	// Constructor for loading suspended games
+	public GBCanvas(MeBoy p, String suspendName) throws RecordStoreException {
 		this();
 		parent = p;
+		this.suspendName = suspendName;
 		
-		try {
-			RecordStore rs = RecordStore.openRecordStore("suspended", true);
-			byte[] b = rs.getRecord(1);
-			rs.closeRecordStore();
-			
-			StringBuffer sb = new StringBuffer();
-			int i = 0;
-			while (b[i] != 0) {
-				sb.append((char) b[i]);
-				i++;
-			}
-			cartName = sb.toString();
-			
-			cpu = new Dmgcpu(cartName, this, b, i+1);
-			
-			setDimensions();
-			
-			new Thread(cpu).start();
-		} catch (Throwable e) {
-			if (MeBoy.debug)
-				e.printStackTrace();
-			throw new RuntimeException("resumption error");
+		RecordStore rs = RecordStore.openRecordStore("s" + suspendName, false);
+		byte[] b = rs.getRecord(1);
+		rs.closeRecordStore();
+		
+		StringBuffer sb = new StringBuffer();
+		int i = 0;
+		while (b[i] != 0) {
+			sb.append((char) b[i]);
+			i++;
 		}
+		cartName = sb.toString();
+		
+		cpu = new Dmgcpu(cartName, this, b, i+1);
+		
+		setDimensions();
+		
+		new Thread(cpu).start();
 	}
 	
+	// Constructor for new games
 	public GBCanvas(MeBoy p, String cart, boolean timing) {
 		this();
 		parent = p;
@@ -228,12 +228,10 @@ public class GBCanvas extends Canvas implements CommandListener {
 				setFullScreenMode(fullScreen);
 				
 				setDimensions();
-			} else if (label == "Show log" && !settingKeys) {
-				MeBoy.log("memory: " + Runtime.getRuntime().freeMemory() + "/" + Runtime.getRuntime().totalMemory());
-				parent.showLog();
 			}
 		} catch (Throwable t) {
 			MeBoy.log(t.toString());
+			MeBoy.showLog();
 		}
 		clear = true;
 		repaint();
@@ -251,14 +249,26 @@ public class GBCanvas extends Canvas implements CommandListener {
 		repaint();
 	}
 	
+	public final void paintFps(Graphics g) {
+		g.setClip(l, t+sh, 80, 16);
+		g.setColor(-1);
+		g.fillRect(l, t+sh, 80, 16);
+		g.setColor(0);
+		
+		int now = (int) System.currentTimeMillis();
+		// calculate moving-average fps
+		// 17 ms * 60 fps * 2*4 seconds = 8160 ms
+		int estfps = ((8160 + now - previousTime[previousTimeIx]) / (now - previousTime[previousTimeIx])) >> 1;
+		previousTime[previousTimeIx] = now;
+		previousTimeIx = (previousTimeIx + 1) & 3;
+		
+		g.drawString(estfps + " fps * " + (cpu.graphicsChip.lastSkipCount+1), l+1, t+sh, 20);
+	}
+	
 	public final void paint(Graphics g) {
 		if (!clear) {
 			if (showFps) {
-				g.setClip(l, t+sh, 80, 16);
-				g.setColor(-1);
-				g.fillRect(l, t+sh, 80, 16);
-				g.setColor(0);
-				g.drawString("skip: " + cpu.graphicsChip.lastSkipCount, l, t+sh, 20);
+				paintFps(g);
 			}
 			g.setClip(l, t, sw, sh);
 			if (trans == 0) {
@@ -278,17 +288,13 @@ public class GBCanvas extends Canvas implements CommandListener {
 			if (g.getClipHeight() == h)
 				clear = false;
 			// full redraw
-			g.setColor(0x446688);
+			g.setColor(0x666666);
 			g.fillRect(0, 0, w, h);
 			g.setColor(-1);
 			g.fillRect(l, t, sw, sh);
 			
 			if (showFps) {
-				g.setClip(l, t+sh, 80, 16);
-				g.setColor(-1);
-				g.fillRect(l, t+sh, 80, 16);
-				g.setColor(0);
-				g.drawString("skip: " + cpu.graphicsChip.lastSkipCount, l, t+sh, 20);
+				paintFps(g);
 			}
 			
 			g.setClip(l, t, sw, sh);
@@ -319,22 +325,38 @@ public class GBCanvas extends Canvas implements CommandListener {
 		try {
 			RecordStore rs = RecordStore.openRecordStore("set", true);
 			
-			byte[] b = new byte[40];
+			int bLength = 52;
+			for (int i = 0; i < MeBoy.suspendIndex.length; i++)
+				bLength += 1 + MeBoy.suspendIndex[i].length();
+			
+			byte[] b = new byte[bLength];
 			
 			for (int i = 0; i < 8; i++)
 				setInt(b, i * 4, key[i]);
 			setInt(b, 32, GraphicsChip.maxFrameSkip);
 			setInt(b, 36, MeBoy.rotations);
+			setInt(b, 40, MeBoy.lazyLoadingThreshold);
+			setInt(b, 44, MeBoy.suspendCounter);
+			setInt(b, 48, MeBoy.suspendIndex.length);
+			
+			int index = 52;
+			for (int i = 0; i < MeBoy.suspendIndex.length; i++) {
+				String s = MeBoy.suspendIndex[i];
+				b[index++] = (byte) (s.length());
+				for (int j = 0; j < s.length(); j++)
+					b[index++] = (byte) s.charAt(j);
+			}
 			
 			if (rs.getNumRecords() == 0) {
-				rs.addRecord(b, 0, 40);
+				rs.addRecord(b, 0, bLength);
 			} else {
-				rs.setRecord(1, b, 0, 40);
+				rs.setRecord(1, b, 0, bLength);
 			}
 			rs.closeRecordStore();
 		} catch (Exception e) {
 			if (MeBoy.debug)
 				e.printStackTrace();
+			MeBoy.log(e.toString());
 		}
 	}
 	
@@ -346,9 +368,27 @@ public class GBCanvas extends Canvas implements CommandListener {
 				
 				for (int i = 0; i < 8; i++)
 					key[i] = getInt(b, i * 4);
-				GraphicsChip.maxFrameSkip = getInt(b, 32);
+				if (b.length >= 36)
+					GraphicsChip.maxFrameSkip = getInt(b, 32);
 				if (b.length >= 40)
 					MeBoy.rotations = getInt(b, 36);
+				if (b.length >= 44)
+					MeBoy.lazyLoadingThreshold = getInt(b, 40);
+				
+				if (b.length >= 48) {
+					// suspended games index
+					MeBoy.suspendCounter = getInt(b, 44);
+					MeBoy.suspendIndex = new String[getInt(b, 48)];
+					
+					int index = 52;
+					for (int i = 0; i < MeBoy.suspendIndex.length; i++) {
+						int slen = b[index++] & 0xff;
+						
+						MeBoy.suspendIndex[i] = new String(b, index, slen);
+						index += slen;
+					}
+				} else
+					MeBoy.suspendIndex = new String[0];
 			} else {
 				writeSettings();
 			}
@@ -356,6 +396,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 		} catch (Exception e) {
 			if (MeBoy.debug)
 				e.printStackTrace();
+			MeBoy.log(e.toString());
 		}
 	}
 	
@@ -367,12 +408,17 @@ public class GBCanvas extends Canvas implements CommandListener {
 			
 			int bankCount = ram.length;
 			int bankSize = ram[0].length;
-			int size = bankCount * bankSize;
+			int size = bankCount * bankSize + 13;
 			
 			byte[] b = new byte[size];
 			
 			for (int i = 0; i < bankCount; i++)
 				System.arraycopy(ram[i], 0, b, i * bankSize, bankSize);
+			
+			System.arraycopy(cpu.rtcReg, 0, b, bankCount * bankSize, 5);
+			long now = System.currentTimeMillis();
+			setInt(b, bankCount * bankSize + 5, (int) (now >> 32));
+			setInt(b, bankCount * bankSize + 9, (int) now);
 			
 			if (rs.getNumRecords() == 0) {
 				rs.addRecord(b, 0, size);
@@ -395,23 +441,37 @@ public class GBCanvas extends Canvas implements CommandListener {
 				byte[][] ram = cpu.cartRam;
 				int bankCount = ram.length;
 				int bankSize = ram[0].length;
-				int size = bankCount * bankSize;
 				
 				byte[] b = rs.getRecord(1);
 				
 				for (int i = 0; i < bankCount; i++)
 					System.arraycopy(b, i * bankSize, ram[i], 0, bankSize);
+				
+				if (b.length == bankCount * bankSize + 13) {
+					// load real time clock
+					System.arraycopy(b, bankCount * bankSize, cpu.rtcReg, 0, 5);
+					long time = getInt(b, bankCount * bankSize + 5);
+					time = (time << 32) + ((long) getInt(b, bankCount * bankSize + 9) & 0xffffffffL);
+					time = System.currentTimeMillis() - time;
+					cpu.rtcSkip((int) (time / 1000));
+				}
 			}
 			rs.closeRecordStore();
 		} catch (Exception e) {
 			if (MeBoy.debug)
 				e.printStackTrace();
+			MeBoy.log(e.toString());
 		}
 	}
 	
 	private final void suspend() {
 		try {
-			RecordStore rs = RecordStore.openRecordStore("suspended", true);
+			boolean insertIndex = false;
+			if (suspendName == null) {
+				suspendName = (MeBoy.suspendCounter++) + ": " + cartName;
+				insertIndex = true;
+			}
+			RecordStore rs = RecordStore.openRecordStore("s" + suspendName, true);
 			
 			byte[] b = cpu.flatten();
 			
@@ -422,9 +482,14 @@ public class GBCanvas extends Canvas implements CommandListener {
 			}
 			
 			rs.closeRecordStore();
+			if (insertIndex)
+				MeBoy.addSuspendedGame(suspendName);
+			MeBoy.log("suspended to " + suspendName);
 		} catch (Exception e) {
+			MeBoy.log("failed suspend: " + e);
 			if (MeBoy.debug)
 				e.printStackTrace();
+			MeBoy.showLog();
 		}
 	}
 }

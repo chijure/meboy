@@ -14,6 +14,25 @@ Credits
 MeBoy Change Log
 -
 
+version 1.3: 24 May 2007
+-
+
+* Added support for Gameboy Color games
+* Added support for multiple saved (suspended) games at once
+* Added support for partial loading of very large ROM files (for phones with
+  limited RAM)
+* Added support for realtime clock (used by Pokemon Gold etc)
+* In addition to frameskip, number of frames per second is displayed
+* Fixed minor keyboard handling bugs, Japanese Pokemon games should work better
+  now
+* Fixed overflow bug that could occur after 2^32 instructions
+* Fixed minor windowing bug, Dragonball Z 2 should work better now
+* ROM files are split into smaller files, which reduces RAM requirement
+* MeBoyBuilder: Now supports zipped ROM files (one ROM per zip file)
+* MeBoyBuilder: Now tries to verify that the selected files are valid Gameboy
+  carts
+* MeBoyBuilder: Can now (optionally) automatically check for updates
+
 version 1.2: 4 Mar 2007
 -
 * Added support for rotating the screen (with a slight performance penalty)

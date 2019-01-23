@@ -48,11 +48,16 @@ public class Dmgcpu implements Runnable {
 		*  on the screen.  Multiply by 154 to find out how many instructions
 		*  per frame.
 		*/
-	protected final int INSTRS_PER_HBLANK = 60; /* around 8 cycles per instruction */
-	protected final int INSTRS_IN_MODE_0 = 30; // instructions in mode 0
-	protected final int INSTRS_IN_MODE_0_2 = 40; // sum of instructions in mode 0 and 2
-	
-	private final int INSTRS_PER_DIV = 33;
+	protected int INSTRS_PER_HBLANK = 60; /* around 8 cycles per instruction, which is an average for several games... */
+	protected int INSTRS_IN_MODE_0 = 30; // instructions in mode 0
+	protected int INSTRS_IN_MODE_0_2 = 40; // sum of instructions in mode 0 and 2
+	protected int INSTRS_PER_DIV = 33;
+
+	// single speed values:
+	protected final int BASE_INSTRS_PER_HBLANK = 60;
+	protected final int BASE_INSTRS_IN_MODE_0 = 30;
+	protected final int BASE_INSTRS_IN_MODE_0_2 = 40;
+	protected final int BASE_INSTRS_PER_DIV = 33;
 	
 	// Constants for interrupts
 	
@@ -93,7 +98,12 @@ public class Dmgcpu implements Runnable {
 	
 	public boolean interruptsEnabled = false;
 	public boolean interruptsArmed = false;
+	protected boolean p10Requested;
 	
+	protected boolean gbcFeatures;
+	protected int gbcRamBank;
+	protected boolean hdmaRunning;
+
 	
 	// 0,1 = rom bank 0
 	// 2,3 = mapped rom bank
@@ -103,8 +113,9 @@ public class Dmgcpu implements Runnable {
 	// 7 = main ram again (+ oam+reg)
 	public byte[][] memory = new byte[8][];
 	
-	// 8Kb main system RAM appears at 0xC000 in address space
-	private byte[] mainRam = new byte[0x2000];
+	// 8kB main system RAM appears at 0xC000 in address space
+	// 32kB for GBC
+	private byte[] mainRam;
 	
 	// sprite ram, at 0xfe00
 	public byte[] oam = new byte[0x100];
@@ -143,12 +154,19 @@ public class Dmgcpu implements Runnable {
 	
 	/** The bank number which is currently mapped at 0x4000 in CPU address space */
 	private int currentRomBank = 1;
+	int loadedRomBanks; // number of lazily loaded ROM banks, including 0
+	private int[] romBankQueue; // FIFO queue for lazily loaded ROM banks, exluding 0
+	private int romBankQueueMark; // next index to remove from rom bank queue
 	
 	/** The RAM bank number which is currently mapped at 0xA000 in CPU address space */
 	private int currentRamBank;
 	
 	private boolean mbc1LargeRamMode;
 	private boolean cartRamEnabled;
+
+	/** realtime clock */
+	public byte[] rtcReg = new byte[5];
+	private int lastRtcUpdate; // ms when rtc were synchronized
 	
 	private int[] incflags = new int[256];
 	private int[] decflags = new int[256];
@@ -167,7 +185,7 @@ public class Dmgcpu implements Runnable {
 		interruptsEnabled = false;
 		
 		f = 0xB0;
-		a = 0x01;
+		a = gbcFeatures ? 0x11 : 0x01;
 		b = 0x00;
 		c = 0x13;
 		d = 0x00;
@@ -236,11 +254,23 @@ public class Dmgcpu implements Runnable {
 		nextTimedInterrupt = GBCanvas.getInt(flatState, offset);
 		offset += 4;
 		
-		interruptsEnabled = (flatState[offset++] != 0);
+		int version = flatState[offset++] & 0xff;
+		
+		if (version <= 1) {
+			// version 0 and 1 is original version, with interruptsEnabled encoded in version
+			interruptsEnabled = (version != 0);
+			if (gbcFeatures) {
+				throw new RuntimeException("Incompatible saved game");
+			}
+		} else if (version == 2) {
+			// new byte for interruptsEnabled, support suspended gbc games
+			interruptsEnabled = (flatState[offset++] != 0);
+			// gbc is ok
+		}
 		interruptsArmed = (flatState[offset++] != 0);
 		
-		System.arraycopy(flatState, offset, mainRam, 0, 0x2000);
-		offset += 0x2000;
+		System.arraycopy(flatState, offset, mainRam, 0, mainRam.length);
+		offset += mainRam.length;
 		System.arraycopy(flatState, offset, oam, 0, 0x0100);
 		offset += 0x0100;
 		System.arraycopy(flatState, offset, registers, 0, 0x0100);
@@ -272,8 +302,19 @@ public class Dmgcpu implements Runnable {
 		mbc1LargeRamMode = (flatState[offset++] != 0);
 		cartRamEnabled = (flatState[offset++] != 0);
 		
+		if (version == 2) {
+			// realtime clock
+			System.arraycopy(flatState, offset, rtcReg, 0, rtcReg.length);
+			offset += rtcReg.length;
+		}
+		
 		offset = graphicsChip.unflatten(flatState, offset);
 		
+		if (gbcFeatures) {
+			gbcRamBank = flatState[offset++] & 0xff;
+			hdmaRunning = flatState[offset++] != 0;
+		}
+
 		setPC(pc);
 		
 		if (offset != flatState.length)
@@ -282,7 +323,10 @@ public class Dmgcpu implements Runnable {
 	}
 	
 	public byte[] flatten() {
-		int size = cartName.length() + 1 + 34 + 0x2200 + 12 + 0x2000 * cartRam.length + 10 + 0x2000 + 48 + 6;
+		int size = cartName.length() + 1 + 35 + mainRam.length + 0x0200 + 12 
+				+ 0x2000 * cartRam.length + 10 + 0x2000 + 48 + 6 + rtcReg.length;
+		if (gbcFeatures)
+			size += 2 + 130 + 0x2000;
 		
 		byte[] flatState = new byte[size];
 		int offset = 0;
@@ -316,11 +360,12 @@ public class Dmgcpu implements Runnable {
 		GBCanvas.setInt(flatState, offset, nextTimedInterrupt);
 		offset+=4;
 		
+		flatState[offset++] = 2; // version
 		flatState[offset++] = (byte) (interruptsEnabled ? 1 : 0);
 		flatState[offset++] = (byte) (interruptsArmed ? 1 : 0);
 		
-		System.arraycopy(mainRam, 0, flatState, offset, 0x2000);
-		offset += 0x2000;
+		System.arraycopy(mainRam, 0, flatState, offset, mainRam.length);
+		offset += mainRam.length;
 		System.arraycopy(oam, 0, flatState, offset, 0x0100);
 		offset += 0x0100;
 		System.arraycopy(registers, 0, flatState, offset, 0x0100);
@@ -348,8 +393,18 @@ public class Dmgcpu implements Runnable {
 		flatState[offset++] = (byte) (mbc1LargeRamMode ? 1 : 0);
 		flatState[offset++] = (byte) (cartRamEnabled ? 1 : 0);
 		
+		System.arraycopy(rtcReg, 0, flatState, offset, rtcReg.length);
+		offset += rtcReg.length;
+		
 		offset = graphicsChip.flatten(flatState, offset);
 		
+		if (gbcFeatures) {
+			flatState[offset++] = (byte) gbcRamBank;
+			flatState[offset++] = (byte) (hdmaRunning ? 1 : 0);
+		}
+
+		if (offset != flatState.length)
+			throw new RuntimeException("flatten offset error:" + Integer.toString(offset, 16) + ", " + Integer.toString(flatState.length, 16));
 		
 		return flatState;
 	}
@@ -358,8 +413,18 @@ public class Dmgcpu implements Runnable {
 		*  the memory
 		*/
 	public final int addressRead(int addr) {
-		if (addr < 0xfe00) {
+		if (addr < 0xa000) {
 			return memory[addr >> 13][addr & 0x1fff];
+		} else if (addr < 0xc000) {
+			if (currentRamBank >= 8) { // real time clock
+				rtcSync();
+				return rtcReg[currentRamBank-8];
+			} else
+				return memory[addr >> 13][addr & 0x1fff];
+		} else if ((addr & 0x1000) == 0) {
+			return mainRam[addr & 0x0fff];
+		} else if (addr < 0xfe00) {
+			return mainRam[(addr & 0x0fff) + gbcRamBank * 0x1000];
 		} else if (addr < 0xFF00) {
 			return (oam[addr - 0xFE00] & 0x00FF);
 		} else {
@@ -371,30 +436,44 @@ public class Dmgcpu implements Runnable {
 		*  memory.
 		*/
 	public final void addressWrite(int addr, int data) {
-		int bank = (addr >> 13) & 0x7;
+		int bank = (addr >> 12) & 0x0f;
 		switch (bank) {
 			case 0x0:
 			case 0x1:
 			case 0x2:
 			case 0x3:
+			case 0x4:
+			case 0x5:
+			case 0x6:
+			case 0x7:
 				cartridgeWrite(addr, data);
 				break;
-				
-			case 0x4:
+
+			case 0x8:
+			case 0x9:
 				graphicsChip.addressWrite(addr - 0x8000, (byte) data);
 				break;
-				
-			case 0x5:
+
+			case 0xA:
+			case 0xB:
 				cartridgeWrite(addr, data);
 				break;
-				
-			case 0x6:
+
+			case 0xC:
 				mainRam[addr - 0xC000] = (byte) data;
 				break;
 				
-			case 0x7:
+			case 0xD:
+				mainRam[addr - 0xD000 + gbcRamBank * 0x1000] = (byte) data;
+				break;
+
+			case 0xE:
+				mainRam[addr - 0xE000] = (byte) data;
+				break;
+				
+			case 0xF:
 				if (addr < 0xFE00) {
-					mainRam[addr - 0xE000] = (byte) data;
+					mainRam[addr - 0xF000 + gbcRamBank * 0x1000] = (byte) data;
 				} else if (addr < 0xFF00) {
 					oam[addr - 0xFE00] = (byte) data;
 				} else {
@@ -482,10 +561,45 @@ public class Dmgcpu implements Runnable {
 		}
 	}
 	
+	private void performHdma() {
+		int dmaSrc = ((registers[0x51] & 0xff) << 8)
+				+ ((registers[0x52] & 0xff) & 0xF0);
+		int dmaDst = ((registers[0x53] & 0x1F) << 8)
+				+ (registers[0x54] & 0xF0) + 0x8000;
+
+		for (int r = 0; r < 16; r++) {
+			addressWrite(dmaDst + r, addressRead(dmaSrc + r));
+		}
+
+		dmaSrc += 16;
+		dmaDst += 16;
+		registers[0x51] = (byte) ((dmaSrc & 0xFF00) >> 8);
+		registers[0x52] = (byte) (dmaSrc & 0x00F0);
+		registers[0x53] = (byte) ((dmaDst & 0x1F00) >> 8);
+		registers[0x54] = (byte) (dmaDst & 0x00F0);
+
+		if (registers[0x55] == 0)
+			hdmaRunning = false;
+		registers[0x55]--;
+	}
+
 	/** If an interrupt is enabled an the interrupt register shows that it has occured, jump to
 		*  the relevant interrupt vector address
 		*/
 	private final void checkInterrupts() {
+		if (p10Requested) {
+			p10Requested = false;
+			if ((registers[0xff] & INT_P10) != 0) {
+				registers[0x0f] |= INT_P10;
+			}
+			
+			interruptsArmed = (registers[0xff] & registers[0x0f]) != 0;
+			if (!interruptsArmed) {
+				// button pressed, but game wasn't interested 
+				return;
+			}
+		}
+		
 		pushPC();
 		
 		int mask = registers[0xff] & registers[0x0f];
@@ -505,6 +619,8 @@ public class Dmgcpu implements Runnable {
 		} else if ((mask & INT_P10) != 0) {
 			setPC(0x60);
 			registers[0x0f] -= INT_P10;
+		} else {
+			throw new RuntimeException("concurrent modification exception: " + mask + " " +  + registers[0xff] + " " +  + registers[0x0f]);
 		}
 		
 		interruptsEnabled = false;
@@ -513,7 +629,7 @@ public class Dmgcpu implements Runnable {
 	
 	/** Check for interrupts that need to be initiated */
 	private final void initiateInterrupts() {
-		if (instrCount >= nextHBlank) {
+		if (instrCount - nextHBlank >= 0) {
 			nextHBlank += INSTRS_PER_HBLANK;
 			
 			// belated increase, since the game hopefully only cares during blanks
@@ -521,6 +637,10 @@ public class Dmgcpu implements Runnable {
 			// to mode 2, but this is faster.
 			registers[0x44]++;
 			
+			if ((gbcFeatures) && (hdmaRunning)) {
+				performHdma();
+			}
+
 			// send the line to graphic chip
 			int line = registers[0x44] & 0xff;
 			
@@ -565,10 +685,10 @@ public class Dmgcpu implements Runnable {
 				}
 			}
 			
-			nextTimedInterrupt = nextHBlank < nextTimaOverflow ? nextHBlank : nextTimaOverflow;
-			nextTimedInterrupt = nextInterruptEnable < nextTimedInterrupt ? nextInterruptEnable
+			nextTimedInterrupt = nextHBlank - nextTimaOverflow < 0 ? nextHBlank : nextTimaOverflow;
+			nextTimedInterrupt = nextInterruptEnable - nextTimedInterrupt < 0 ? nextInterruptEnable
 					: nextTimedInterrupt;
-		} else if (instrCount >= nextTimaOverflow) {
+		} else if (instrCount - nextTimaOverflow >= 0) {
 			nextTimaOverflow += instrsPerTima * (0x100 - registers[0x06]);
 			
 			if ((registers[0xff] & INT_TIMA) != 0) {
@@ -576,14 +696,14 @@ public class Dmgcpu implements Runnable {
 				registers[0x0f] |= INT_TIMA;
 			}
 			
-			nextTimedInterrupt = nextHBlank < nextTimaOverflow ? nextHBlank : nextTimaOverflow;
-			nextTimedInterrupt = nextInterruptEnable < nextTimedInterrupt ? nextInterruptEnable
+			nextTimedInterrupt = nextHBlank - nextTimaOverflow < 0 ? nextHBlank : nextTimaOverflow;
+			nextTimedInterrupt = nextInterruptEnable - nextTimedInterrupt < 0 ? nextInterruptEnable
 					: nextTimedInterrupt;
-		} else if (instrCount >= nextInterruptEnable) {
+		} else if (instrCount - nextInterruptEnable >= 0) {
 			interruptsEnabled = true;
 			
 			nextInterruptEnable = 0x7fffffff;
-			nextTimedInterrupt = nextHBlank < nextTimaOverflow ? nextHBlank : nextTimaOverflow;
+			nextTimedInterrupt = nextHBlank - nextTimaOverflow < 0 ? nextHBlank : nextTimaOverflow;
 		}
 	}
 	
@@ -593,6 +713,8 @@ public class Dmgcpu implements Runnable {
 			localPC = pc & 0x1fff;
 			globalPC = pc & 0xe000;
 			decoderMaxCruise = (pc < 0xe000) ? 0x1ffd : 0x1dfd;
+			if (gbcRamBank > 1 && pc >= 0xC000)
+				decoderMaxCruise &= 0x0fff; // can't cruise in switched ram bank
 		} else {
 			decoderMemory = registers;
 			localPC = pc & 0xff;
@@ -618,9 +740,11 @@ public class Dmgcpu implements Runnable {
 			
 			/* debug code for timing 18000000 instructions, which is roughly the time for a demo for SML
 			if (timing && instrCount >= 18000000) {
-				MeBoy.log("18M time: " + ((int) System.currentTimeMillis() - startTime + 50)/100);
+				int time = ((int) System.currentTimeMillis() - startTime + 50)/100;
+				MeBoy.log("18M time: " + time);
 				terminate = true;
 				screen.showFps = true;
+				graphicsChip.lastSkipCount = time;
 				screen.repaint();
 			}*/
 			
@@ -734,6 +858,26 @@ public class Dmgcpu implements Runnable {
 				case 0x10: // STOP
 					localPC++;
 					
+					if (gbcFeatures) {
+						if ((registers[0x4D] & 0x01) == 1) {
+							int newKey1Reg = registers[0x4D] & 0xFE;
+							int multiplier = 1;
+							if ((newKey1Reg & 0x80) == 0x80) {
+								newKey1Reg &= 0x7F;
+							} else {
+								multiplier = 2;
+								newKey1Reg |= 0x80;
+							}
+							
+							INSTRS_PER_HBLANK = BASE_INSTRS_PER_HBLANK * multiplier;
+							INSTRS_PER_DIV = BASE_INSTRS_PER_DIV * multiplier;
+							INSTRS_IN_MODE_0 = BASE_INSTRS_IN_MODE_0 * multiplier;
+							INSTRS_IN_MODE_0_2 = BASE_INSTRS_IN_MODE_0_2 * multiplier;
+
+							registers[0x4D] = (byte) newKey1Reg;
+						}
+					}
+
 					break;
 				case 0x11: // LD DE, nnnn
 					localPC += 2;
@@ -1706,7 +1850,7 @@ public class Dmgcpu implements Runnable {
 				checkInterrupts();
 			}
 			
-			if (instrCount >= nextTimedInterrupt) {
+			if (instrCount - nextTimedInterrupt >= 0) {
 				initiateInterrupts();
 			}
 		}
@@ -1721,6 +1865,7 @@ public class Dmgcpu implements Runnable {
 		}
 		ioWrite(0x40, 0x91);
 		ioWrite(0x0F, 0x01);
+		hdmaRunning = false;
 	}
 	
 	/** Read data from IO Ram */
@@ -1757,6 +1902,10 @@ public class Dmgcpu implements Runnable {
 				return 0;
 			
 			return ((instrCount + instrsPerTima * 0x100 - nextTimaOverflow) / instrsPerTima);
+		} else if (num == 0x69 && gbcFeatures) {
+			graphicsChip.getGBCPalette(false, registers[0x68] & 0x3f);
+		} else if (num == 0x6B && gbcFeatures) {
+			graphicsChip.getGBCPalette(true, registers[0x6A] & 0x3f);
 		}
 		
 		return registers[num];
@@ -1776,8 +1925,9 @@ public class Dmgcpu implements Runnable {
 					// P15
 					output |= buttonState >> 4;
 				}
-				// the high nybble is unused for reading (according to gbcpuman)
-				registers[0x00] = (byte) ((data & 0xf0) | (~output & 0x0f));
+				// the high nybble is unused for reading (according to gbcpuman), but Japanese Pokemon
+				// seems to require it to be set to f
+				registers[0x00] = (byte) ((0xf0) | (~output & 0x0f));
 				
 				break;
 				
@@ -1867,9 +2017,15 @@ public class Dmgcpu implements Runnable {
 					graphicsChip.spritesEnabled = false;
 				}
 				
-				if ((data & 0x01) == 0) { // BIT 0
-					graphicsChip.bgEnabled = false;
-					graphicsChip.winEnabled = false;
+				// BIT 0
+				if ((data & 0x01) == 0) {
+					if (gbcFeatures) {
+						graphicsChip.spritePriorityEnabled = false;
+					} else {
+						// this emulates the gbc-in-gb-mode, not the original gb-mode
+						graphicsChip.bgEnabled = false;
+						graphicsChip.winEnabled = false;
+					}
 				}
 				
 				registers[0x40] = (byte) data;
@@ -1908,7 +2064,89 @@ public class Dmgcpu implements Runnable {
 					registers[0x49] = (byte) data;
 					graphicsChip.invalidateAll(2);
 				}
-					break;
+				break;
+				
+			case 0x4A: // FF4A - Window Position Y
+				if ((data & 0xff) >= 144)
+					graphicsChip.stopWindowFromLine();
+				registers[num] = (byte) data;
+				break;
+				
+			case 0x4B: // FF4B - Window Position X
+				if ((data & 0xff) >= 167)
+					graphicsChip.stopWindowFromLine();
+				registers[num] = (byte) data;
+				break;
+				
+			case 0x4F: // FF4F - VRAM Bank - GBC only
+				if (gbcFeatures) {
+					graphicsChip.setVRamBank(data & 0x01);
+				}
+				registers[0x4F] = (byte) data;
+				break;
+				
+			case 0x55: // FF55 - HDMA5 - GBC only
+				if ((!hdmaRunning) && ((registers[0x55] & 0x80) == 0) && ((data & 0x80) == 0)) {
+					int dmaSrc = ((registers[0x51] & 0xff) << 8) + (registers[0x52] & 0xF0);
+					int dmaDst = ((registers[0x53] & 0x1F) << 8) + (registers[0x54] & 0xF0) + 0x8000;
+					int dmaLen = ((data & 0x7F) * 16) + 16;
+
+					for (int r = 0; r < dmaLen; r++) {
+						addressWrite(dmaDst + r, addressRead(dmaSrc + r));
+					}
+				} else {
+					if ((data & 0x80) == 0x80) {
+						hdmaRunning = true;
+						registers[0x55] = (byte) (data & 0x7F);
+						break;
+					} else if ((hdmaRunning) && ((data & 0x80) == 0)) {
+						hdmaRunning = false;
+					}
+				}
+
+				registers[0x55] = (byte) data;
+				break;
+
+
+			case 0x69: // FF69 - Background Palette Data - GBC only
+				if (gbcFeatures) {
+					graphicsChip.setGBCPalette(false, registers[0x68] & 0x3f, data & 0xff);
+
+					if ((registers[0x68] & 0x80) != 0) {
+						registers[0x68]++;
+					}
+				}
+				break;
+
+			case 0x6B: // FF6B - Sprite Palette Data - GBC only
+				if (gbcFeatures) {
+					graphicsChip.setGBCPalette(true, registers[0x6A] & 0x3f, data & 0xff);
+
+					if ((registers[0x6A] & 0x80) != 0) {
+						if ((registers[0x6A] & 0x3F) == 0x3F) {
+							registers[0x6A] = (byte) 0x80;
+						} else {
+							registers[0x6A]++;
+						}
+					}
+				}
+				break;
+
+			case 0x70: // FF70 - GBC Work RAM bank
+				if (gbcFeatures) {
+					if (((data & 0x07) == 0) || ((data & 0x07) == 1)) {
+						gbcRamBank = 1;
+					} else {
+						gbcRamBank = data & 0x07;
+					}
+					
+					if (globalPC >= 0xC000) {
+						// verify cruising if executing in RAM
+						setPC(globalPC + localPC);
+					}
+				}
+				registers[0x70] = (byte) data;
+				break;
 				
 			case 0xff:
 				registers[0xff] = (byte) data;
@@ -1927,9 +2165,9 @@ public class Dmgcpu implements Runnable {
 	/** Create a cartridge object, loading ROM and any associated battery RAM from the cartridge
 		*  filename given. */
 	private final void initCartridge() {
-		java.io.InputStream is = getClass().getResourceAsStream(cartName);
+		java.io.InputStream is = getClass().getResourceAsStream(cartName + '0');
 		if (is == null) {
-			MeBoy.log("ERROR: The cart \"" + cartName.substring(1) + "\" does not exist.");
+			MeBoy.log("ERROR: The cart \"" + cartName + "\" does not exist.");
 			throw new RuntimeException();
 		}
 		try {
@@ -1942,27 +2180,56 @@ public class Dmgcpu implements Runnable {
 			
 			cartType = firstBank[0x0147];
 			int numRomBanks = lookUpCartSize(firstBank[0x0148]); // Determine the number of 16kb rom banks
+			gbcFeatures = ((firstBank[0x143] & 0x80) == 0x80);
+			if (gbcFeatures)
+				mainRam = new byte[0x8000]; // 32 kB
+			else
+				mainRam = new byte[0x2000]; // 8 kB
+			gbcRamBank = 1;
 			
-			rom = new byte[numRomBanks * 2][0x2000]; // Recreate the ROM array with the correct size
-			rom[0] = firstBank;
-			
-			// Read ROM into memory
-			for (int i = 1; i < numRomBanks * 2; i++) {
+			if (numRomBanks <= MeBoy.lazyLoadingThreshold) {
+				rom = new byte[numRomBanks * 2][0x2000]; // Recreate the ROM array with the correct size
+				rom[0] = firstBank;
+				
+				// Read ROM into memory
+				for (int i = 1; i < numRomBanks * 2; i++) {
+					if ((i & 15) == 0) {
+						// open next file
+						is.close();
+						is = getClass().getResourceAsStream(cartName + (i >> 4));
+					}
+					
+					total = 0x2000;
+					do {
+						total -= is.read(rom[i], 0x2000 - total, total);
+					} while (total > 0);
+				}
+			} else {
+				rom = new byte[numRomBanks * 2][]; // Recreate the ROM array with the correct size
+				rom[0] = firstBank;
+				rom[1] = new byte[0x2000];
+				
+				MeBoy.log("Partial loading active.");
+				// Read halfbank 1 (second half of bank 0) into memory
 				total = 0x2000;
 				do {
-					total -= is.read(rom[i], 0x2000 - total, total); // Read the entire ROM
+					total -= is.read(rom[1], 0x2000 - total, total);
 				} while (total > 0);
+				loadedRomBanks = 1;
+				romBankQueue = new int[MeBoy.lazyLoadingThreshold];
+				romBankQueueMark = 1;
 			}
 			is.close();
 			
 			memory[0] = rom[0];
 			memory[1] = rom[1];
+			romTouch = new int[rom.length/2];
 			mapRom(1);
 			
 			int numRamBanks = getNumRAMBanks();
 			
-			MeBoy.log("Loaded '" + cartName + "'.  " + numRomBanks + " banks, "
-							+ (numRomBanks * 16) + "Kb.  " + numRamBanks + " RAM banks.");
+			MeBoy.log("Loaded '" + cartName + "'. " + numRomBanks + " banks = "
+							+ (numRomBanks * 16) + " kB, " + numRamBanks + " RAM banks.");
 			MeBoy.log("Type: " + cartType);
 			
 			if (cartType == 6 && numRamBanks == 0)
@@ -1970,27 +2237,87 @@ public class Dmgcpu implements Runnable {
 			cartRam = new byte[numRamBanks][0x2000];
 			if (numRamBanks > 0)
 				memory[5] = cartRam[0];
+			
+			lastRtcUpdate = (int) System.currentTimeMillis();
 		} catch (Exception e) {
-			MeBoy.log("ERROR: Loading the cart \"" + cartName.substring(1) + "\" failed.");
+			MeBoy.log("ERROR: Loading the cart \"" + cartName + "\" failed.");
 			MeBoy.log(e.toString());
 
 			throw new RuntimeException();
 		}
 	}
 	
+	private int[] romTouch;
+	
 	/** Maps a ROM bank into the CPU address space at 0x4000 */
 	private final void mapRom(int bankNo) {
 		currentRomBank = bankNo;
+		
+		romTouch[bankNo] = instrCount;
+		if (rom[bankNo * 2] == null) {
+			try {
+				byte[][] newmem = new byte[2][];
+				if (loadedRomBanks >= MeBoy.lazyLoadingThreshold) {
+					// overwrite previous bank
+					int excluded = romBankQueue[romBankQueueMark];
+					
+					newmem[0] = rom[excluded*2];
+					newmem[1] = rom[excluded*2+1];
+					rom[excluded*2] = null;
+					rom[excluded*2+1] = null;
+					
+					romBankQueue[romBankQueueMark++] = bankNo;
+					if (romBankQueueMark == MeBoy.lazyLoadingThreshold)
+						romBankQueueMark = 1; // i.e. don't kick out bank 0
+				} else {
+					newmem[0] = new byte[0x2000];
+					newmem[1] = new byte[0x2000];
+					
+					romBankQueue[loadedRomBanks] = bankNo;
+					loadedRomBanks++;
+				}
+				
+				int file = bankNo >> 3;
+				int offset = (bankNo & 7) * 0x4000;
+				java.io.InputStream is = getClass().getResourceAsStream(cartName + file);
+				
+				if (is.skip(offset) != offset)
+					throw new RuntimeException("failed skipping to " + bankNo);
+				
+				for (int i = bankNo*2; i < bankNo*2+2; i++) {
+					int total = 0x2000;
+					rom[i] = newmem[i & 1];
+					do {
+						total -= is.read(rom[i], 0x2000 - total, total);
+					} while (total > 0);
+				}
+				// MeBoy.log("loaded bank " + bankNo + " from " + file + " -> " + loadedRomBanks + "/" + tc);
+				
+				is.close();
+			} catch (Exception e) {
+				MeBoy.log("ERROR: Lazy loading the cart \"" + cartName + "\" failed.");
+				MeBoy.log(e.toString());
+				if (MeBoy.debug)
+					e.printStackTrace();
+	
+				throw new RuntimeException();
+			}
+		} else {
+			tc++;
+		}
+		
 		memory[2] = rom[bankNo*2];
 		memory[3] = rom[bankNo*2+1];
 		if ((globalPC & 0xC000) == 0x4000) {
 			setPC(localPC + globalPC);
 		}
 	}
+	int tc;
 	
 	private final void mapRam(int bankNo) {
 		currentRamBank = bankNo;
-		memory[5] = cartRam[bankNo];
+		if (currentRamBank <= cartRam.length)
+			memory[5] = cartRam[bankNo];
 	}
 	
 	/** Writes to an address in CPU address space.  Writes to ROM may cause a mapping change.
@@ -2000,12 +2327,14 @@ public class Dmgcpu implements Runnable {
 		int subaddr = addr & 0x1fff;
 		
 		switch (cartType) {
-			case 0: /* ROM Only */
+			case 0:
+				// ROM Only
 				break;
-				
-			case 1: /* MBC1 */
+
+			case 1:
 			case 2:
 			case 3:
+				// MBC1
 				if (halfbank == 5) {
 					if (cartRamEnabled) {
 						memory[halfbank][subaddr] = (byte) data;
@@ -2030,6 +2359,7 @@ public class Dmgcpu implements Runnable {
 				
 			case 5:
 			case 6:
+				// MBC2
 				if ((halfbank == 1)) {
 					if ((addr & 0x0100) != 0) {
 						int bankNo = data & 0x0F;
@@ -2051,10 +2381,10 @@ public class Dmgcpu implements Runnable {
 			case 0x10:
 			case 0x11:
 			case 0x12:
-			case 0x13: /* MBC3 */
-				
-				// Select ROM bank
+			case 0x13:
+				// MBC3
 				if (halfbank == 1) {
+					// Select ROM bank
 					int bankNo = data & 0x7F;
 					if (bankNo == 0)
 						bankNo = 1;
@@ -2062,9 +2392,16 @@ public class Dmgcpu implements Runnable {
 				} else if (halfbank == 2) {
 					// Select RAM bank
 					mapRam(data);
-				}
-				if (halfbank == 5) {
-					memory[halfbank][subaddr] = (byte) data;
+				} else if (halfbank == 5) {
+					// memory write
+					if (currentRamBank >= 8) {
+						// rtc register
+						rtcSync();
+						rtcReg[currentRamBank-8] = (byte) data;
+					} else {
+						// normal memory
+						memory[halfbank][subaddr] = (byte) data;
+					}
 				}
 				break;
 				
@@ -2075,7 +2412,7 @@ public class Dmgcpu implements Runnable {
 			case 0x1C:
 			case 0x1D:
 			case 0x1E:
-				
+				// MBC5
 				if ((addr >= 0x2000) && (addr <= 0x2FFF)) {
 					int bankNo = (currentRomBank & 0xFF00) | data;
 					mapRom(bankNo);
@@ -2085,12 +2422,77 @@ public class Dmgcpu implements Runnable {
 				} else if (halfbank == 2) {
 					mapRam(data & 0x07);
 				} else if (halfbank == 5) {
-					memory[halfbank][subaddr] = (byte) data;
+					if (memory[5] != null)
+						memory[halfbank][subaddr] = (byte) data;
+					else {
+						// shouldn't be here, the cart type specifies no cart ram,
+						// but the game tries to access it
+					}
 				}
 				break;
 		}
 	}
 	
+	// Update the RTC registers before reading/writing (if active) with small delta
+	protected final void rtcSync() {
+		if ((rtcReg[4] & 0x40) == 0) {
+			// active
+			int now = (int) System.currentTimeMillis();
+			while (now - lastRtcUpdate > 1000) {
+				lastRtcUpdate += 1000;
+				
+				if (++rtcReg[0] == 60) {
+					rtcReg[0] = 0;
+					
+					if (++rtcReg[1] == 60) {
+						rtcReg[1] = 0;
+						
+						if (++rtcReg[2] == 24) {
+							rtcReg[2] = 0;
+							
+							if (++rtcReg[3] == 0) {
+								rtcReg[4] = (byte) ((rtcReg[4] | (rtcReg[4] << 7)) ^ 1);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// Update the RTC registers after resuming (large delta)
+	protected final void rtcSkip(int s) {
+		// seconds
+		int sum = s + rtcReg[0];
+		rtcReg[0] = (byte) (sum % 60);
+		sum = sum / 60;
+		if (sum == 0)
+			return;
+		
+		// minutes
+		sum = sum + rtcReg[1];
+		rtcReg[1] = (byte) (sum % 60);
+		sum = sum / 60;
+		if (sum == 0)
+			return;
+		
+		// hours
+		sum = sum + rtcReg[2];
+		rtcReg[2] = (byte) (sum % 24);
+		sum = sum / 24;
+		if (sum == 0)
+			return;
+		
+		// days, bit 0-7
+		sum = sum + (rtcReg[3] & 0xff) + ((rtcReg[4] & 1) << 8);
+		rtcReg[3] = (byte) (sum);
+		
+		// overflow & day bit 8
+		if (sum > 511)
+			rtcReg[4] |= 0x80;
+		rtcReg[4] = (byte) ((rtcReg[4] & 0xfe) + ((sum >> 8) & 1));
+	}
+
 	private final int getNumRAMBanks() {
 		switch (rom[0][0x149]) {
 			case 1:
@@ -2109,40 +2511,33 @@ public class Dmgcpu implements Runnable {
 	/** Returns the number of 16Kb banks in a cartridge from the header size byte. */
 	private final int lookUpCartSize(int sizeByte) {
 		/** Translation between ROM size byte contained in the ROM header, and the number
-		*  of 16Kb ROM banks the cartridge will contain
+		*  of 16kB ROM banks the cartridge will contain
 		*/
-		int[][] romSizeTable = { { 0, 2}, { 1, 4}, { 2, 8}, { 3, 16}, { 4, 32}, { 5, 64},
-				{ 6, 128}, { 7, 256}, { 0x52, 72}, { 0x53, 80}, { 0x54, 96}};
-		
-		int i = 0;
-		while ((i < romSizeTable.length) && (romSizeTable[i][0] != sizeByte)) {
-			i++;
-		}
-		
-		if (romSizeTable[i][0] == sizeByte) {
-			return romSizeTable[i][1];
-		} else {
-			return -1;
-		}
+		if (sizeByte < 8)
+			return 2 << sizeByte;
+		else if (sizeByte == 0x52)
+			return 72;
+		else if (sizeByte == 0x53)
+			return 80;
+		else if (sizeByte == 0x54)
+			return 96;
+		return -1;
 	}
 	
 	public final boolean hasBattery() {
-		return (cartType == 3) || (cartType == 9) || (cartType == 0x1B) || (cartType == 0x1E) || (cartType == 6) || (cartType == 0x10) || (cartType == 0x13);
+		return (cartType == 3) || (cartType == 9) || (cartType == 0x1B) || (cartType == 0x1E) ||
+				(cartType == 6) || (cartType == 0x10) || (cartType == 0x13);
 	}
 	
 	public void buttonDown(int buttonIndex) {
 		buttonState |= 1 << buttonIndex;
-		if ((registers[0xff] & INT_P10) != 0) {
-			interruptsArmed = true;
-			registers[0x0f] |= INT_P10;
-		}
+		p10Requested = true;
+		interruptsArmed = true;
 	}
 
 	public void buttonUp(int buttonIndex) {
 		buttonState &= 0xff - (1 << buttonIndex);
-		if ((registers[0xff] & INT_P10) != 0) {
-			interruptsArmed = true;
-			registers[0x0f] |= INT_P10;
-		}
+		p10Requested = true;
+		interruptsArmed = true;
 	}
 }
