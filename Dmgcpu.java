@@ -1988,6 +1988,13 @@ public class Dmgcpu implements Runnable {
 				
 				// sound registers: 10 11 12 13 14 16 17 18 19 1a 1b 1c 1d 1e 20 21 22 23 24 25 26 30-3f
 				
+			case 0x1a:
+				// sound mode 3, on/off
+				registers[num] = (byte) data;
+				if ((data & 0x80) == 0)
+					registers[0x26] &= 0xfb; // clear bit 2 of sound status register
+				break;
+				
 			case 0x40: // LCDC
 				graphicsChip.bgEnabled = true;
 				
@@ -2181,6 +2188,7 @@ public class Dmgcpu implements Runnable {
 			cartType = firstBank[0x0147];
 			int numRomBanks = lookUpCartSize(firstBank[0x0148]); // Determine the number of 16kb rom banks
 			gbcFeatures = ((firstBank[0x143] & 0x80) == 0x80);
+			
 			if (gbcFeatures)
 				mainRam = new byte[0x8000]; // 32 kB
 			else
@@ -2391,7 +2399,8 @@ public class Dmgcpu implements Runnable {
 					mapRom(bankNo);
 				} else if (halfbank == 2) {
 					// Select RAM bank
-					mapRam(data);
+					if (cartRam.length > 0)
+						mapRam(data);
 				} else if (halfbank == 5) {
 					// memory write
 					if (currentRamBank >= 8) {
@@ -2420,7 +2429,8 @@ public class Dmgcpu implements Runnable {
 					int bankNo = (currentRomBank & 0x00FF) | ((data & 0x01) << 8);
 					mapRom(bankNo);
 				} else if (halfbank == 2) {
-					mapRam(data & 0x07);
+					if (cartRam.length > 0)
+						mapRam(data & 0x07);
 				} else if (halfbank == 5) {
 					if (memory[5] != null)
 						memory[halfbank][subaddr] = (byte) data;

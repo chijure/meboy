@@ -9,7 +9,7 @@ import java.util.zip.*;
 import javax.swing.*;
 
 /**
- * A quick-and-dirty class for building the MeBoy.jar and .jad files.
+ * A (decreasingly) quick-and-dirty class for building the MeBoy.jar and .jad files.
  * It will copy the contents of its own jar (except MeBoyBuilder.class)
  * and replace the manifest with the file MEMANIFEST.
  * 
@@ -23,11 +23,6 @@ public class MeBoyBuilder {
 		try {
 			ZipOutputStream zo = new ZipOutputStream(new FileOutputStream("MeBoy.jar"));
 
-			// copy MeBoy and manifest files
-			String[][] files = new String[][] { { "Dmgcpu.class"},
-					{ "GBCanvas.class"},
-					{ "GraphicsChip.class"}, { "MeBoy.class"},
-					{ "MEMANIFEST", "META-INF/MANIFEST.MF"}};
 			int banksPerFile = 8;
 			int maxFileSize = banksPerFile << 14;
 			byte[] buf = new byte[maxFileSize];
@@ -36,16 +31,8 @@ public class MeBoyBuilder {
 				InputStream tis = ClassLoader.getSystemClassLoader().getResourceAsStream(
 						copyName[0]);
 
-				zo.putNextEntry(new ZipEntry(copyName[copyName.length-1]));
-				r = tis.read(buf, 0, maxFileSize);
-				while (r >= 0) {
-					if (r > 0)
-						zo.write(buf, 0, r);
-					r = tis.read(buf, 0, maxFileSize);
-				}
-				tis.close();
-			}
-
+			boolean version12compat = false;
+			
 			// add games
 			ArrayList<String> gameFiles = new ArrayList<String>();
 			int gamesSize = 0;
@@ -70,11 +57,37 @@ public class MeBoyBuilder {
 					message.append(". Add a ROM file, or finish building MeBoy.jar?");
 
 				int response = JOptionPane.showOptionDialog(null, string2JTA(message.toString()),
-						"MeBoyBuilder 1.3", 0, JOptionPane.PLAIN_MESSAGE, null, new Object[] {
-								"Add ROM", "Finish"}, "Add ROM");
+						"MeBoyBuilder 1.3.1", 0, JOptionPane.PLAIN_MESSAGE, null, new Object[] {
+								"Add ROM", "Finish", "Update options"}, "Add ROM");
 
 				if (response == 1 || response == -1) {
 					break;
+				} else if (response == 2) {
+					String m = "For users updating from MeBoy 1.1 or 1.2:\n\n" +
+							"Due to a design mistake in the development of MeBoy 1.3, the " +
+							"newer versions do not by default share suspended game info and battery-backed " +
+							"game memory with MeBoy 1.1 and 1.2. If you are updating from 1.1 or 1.2 and want to keep " +
+							"your saved games, please select the 1.2-compatible " +
+							"option below to use the \"old\" method of saving. (The new features " +
+							"in 1.3.1 will work even if you select the 1.2-compatble option.)\n\n" +
+							"Your suspended game will show up as \"1: (From 1.1/1.2)\" in the \"Resume " +
+							"Game\" list. Please note that suspended games from combined GB/GBC games (e.g. " +
+							"Zelda DX) can not be transferred from 1.2 to 1.3 or later!\n\n" +
+							"The battery-backed game memory is always transferable, so when possible, " +
+							"please save your progress by using the game's own save feature (not by suspending) before " +
+							"upgrading from 1.1 or 1.2 to 1.3 or later.\n\n" +
+							"If you are a new user or upgrade " +
+							"from 1.3, please select the default option.";
+					
+					response = JOptionPane.showOptionDialog(null, string2JTA(m),
+						"MeBoyBuilder 1.3.1", 0, JOptionPane.PLAIN_MESSAGE, null, new Object[] {
+								"Default", "1.2-compatible"}, "Default");
+					if (response == 1)
+						version12compat = true;
+					else if (response == 0)
+						version12compat = false;
+					
+					continue;
 				}
 
 				int returnVal = chooser.showOpenDialog(null);
@@ -191,7 +204,28 @@ public class MeBoyBuilder {
 					fi.close();
 				}
 			}
+			
+			String manifestName = version12compat ? "MEMANIFEST12" : "MEMANIFEST";
 
+			// copy MeBoy and manifest files
+			String[][] files = new String[][] { { "Dmgcpu.class"},
+					{ "GBCanvas.class"},
+					{ "GraphicsChip.class"}, { "MeBoy.class"},
+					{ manifestName, "META-INF/MANIFEST.MF"}};
+			for (String[] copyName : files) {
+				InputStream tis = ClassLoader.getSystemClassLoader().getResourceAsStream(
+						copyName[0]);
+
+				zo.putNextEntry(new ZipEntry(copyName[copyName.length-1]));
+				r = tis.read(buf, 0, maxFileSize);
+				while (r >= 0) {
+					if (r > 0)
+						zo.write(buf, 0, r);
+					r = tis.read(buf, 0, maxFileSize);
+				}
+				tis.close();
+			}
+			
 			// add carts.txt
 			zo.putNextEntry(new ZipEntry("carts.txt"));
 			PrintWriter pw = new PrintWriter(zo);
@@ -200,16 +234,15 @@ public class MeBoyBuilder {
 			zo.close();
 
 			// create MeBoy.jad
+			BufferedReader ir = new BufferedReader(new InputStreamReader(ClassLoader.getSystemClassLoader().getResourceAsStream(
+						manifestName)));
 			FileWriter fw = new FileWriter("MeBoy.jad");
-			fw.write("MIDlet-Name: MeBoy\n");
-			fw.write("MIDlet-Version: 1.3.0\n");
-			fw.write("MIDlet-Vendor: Bjorn Carlin, www.arktos.se\n");
-			fw.write("MicroEdition-Profile: MIDP-2.0\n");
-			fw.write("MicroEdition-Configuration: CLDC-1.0\n");
+			String s;
+			while ((s = ir.readLine()) != null) {
+				fw.write(s + '\n');
+			}
 			fw.write("MIDlet-Jar-URL: MeBoy.jar\n");
 			fw.write("MIDlet-Jar-Size: " + new File("MeBoy.jar").length() + '\n');
-			fw.write("MIDlet-Description: Gameboy emulator for J2ME\n");
-			fw.write("MIDlet-1: MeBoy, , MeBoy\n");
 			fw.close();
 
 			if (gameCount == 0)
@@ -245,7 +278,7 @@ public class MeBoyBuilder {
 					.showOptionDialog(
 							null,
 							string2JTA("Do you want MeBoyBuilder to automatically check for program updates when launched?"),
-							"MeBoyBuilder 1.3", 0, JOptionPane.PLAIN_MESSAGE, null, new Object[] {
+							"MeBoyBuilder 1.3.1", 0, JOptionPane.PLAIN_MESSAGE, null, new Object[] {
 									"Don't check", "Check"}, "Check");
 
 			if (response == 1) {
@@ -266,7 +299,7 @@ public class MeBoyBuilder {
 			
 			try {
 				// read info from home page
-				URL inputURL = new URL("http://arktos.se/meboy/update/13.txt");
+				URL inputURL = new URL("http://arktos.se/meboy/update/131.txt");
 				URLConnection urlConnection = inputURL.openConnection();
 				urlConnection.connect();
 
@@ -284,7 +317,7 @@ public class MeBoyBuilder {
 					String message = new String(buf, 0, done);
 
 					int response = JOptionPane.showOptionDialog(null,
-							string2JTA(message.toString()), "MeBoyBuilder 1.3", 0,
+							string2JTA(message.toString()), "MeBoyBuilder 1.3.1", 0,
 							JOptionPane.PLAIN_MESSAGE, null, new Object[] { "Cancel",
 									"Visit homepage"}, "Visit homepage");
 
@@ -293,7 +326,7 @@ public class MeBoyBuilder {
 					}
 				} else if (firstLaunch) {
 					JOptionPane.showMessageDialog(null,
-							string2JTA("1.3 is the most recent version."), "MeBoyBuilder 1.3",
+							string2JTA("1.3.1 is the most recent version."), "MeBoyBuilder 1.3.1",
 							JOptionPane.WARNING_MESSAGE);
 				}
 			} catch (Exception e) {

@@ -14,6 +14,13 @@ Credits
 MeBoy Change Log
 -
 
+version 1.3.1: 29 May 2007
+-
+
+* Fixed cartridge mapping bug, improves game compatibility (e.g. Catwoman)
+* Fixed sound status register bug, improves game compatibility (e.g. Legend of Zelda - Oracle of Ages)
+* MeBoyBuilder: added option for transferring saved games from version 1.1/1.2
+
 version 1.3: 24 May 2007
 -
 

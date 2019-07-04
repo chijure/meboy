@@ -104,7 +104,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 	}
 	
 	private void mainMenuAction() {
-		mainMenu = new List("MeBoy 1.3", List.IMPLICIT);
+		mainMenu = new List("MeBoy 1.3.1", List.IMPLICIT);
 		mainMenu.append("New Game", null);
 		if (suspendIndex.length > 0)
 			mainMenu.append("Resume Game", null);
