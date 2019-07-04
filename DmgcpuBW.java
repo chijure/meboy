@@ -33,7 +33,7 @@ import javax.microedition.lcdui.*;
 *  in CPU address space that points to the correct area of
 *  ROM/RAM/IO.
 */
-public class Dmgcpu implements ICpu {
+public class DmgcpuBW implements ICpu {
 	// Constants for flags register
 	
 	/** Zero flag */
@@ -101,11 +101,6 @@ public class Dmgcpu implements ICpu {
 	public boolean interruptsEnabled = false;
 	public boolean interruptsArmed = false;
 	protected boolean p10Requested;
-	//#if +gbc
-	protected boolean gbcFeatures; //#if +gbc
-	protected int gbcRamBank;
-	protected boolean hdmaRunning;
-	//#if
 
 	
 	// 0,1 = rom bank 0
@@ -135,7 +130,7 @@ public class Dmgcpu implements ICpu {
 	private int buttonState;
 	
 	
-	public GraphicsChip graphicsChip;
+	public GraphicsChipBW graphicsChip;
 	public GBCanvas screen;
 	public boolean terminate;
 	
@@ -171,12 +166,12 @@ public class Dmgcpu implements ICpu {
 	private int[] decflags = new int[256];
 	
 	
-	public Dmgcpu(String cart, GBCanvas gbc) {
+	public DmgcpuBW(String cart, GBCanvas gbc) {
 		cartName = cart;
 		initCartridge();
 		screen = gbc;
 		
-		graphicsChip = new GraphicsChip(this);
+		graphicsChip = new GraphicsChipBW(this);
 		
 		memory[6] = mainRam;
 		memory[7] = mainRam;
@@ -184,11 +179,7 @@ public class Dmgcpu implements ICpu {
 		interruptsEnabled = false;
 		
 		f = 0xB0;
-		if (gbcFeatures) { //#if +gbc
-			a = 0x11;
-		} else { //#if -gbc
 			a = 0x01;
-		} //#if
 		b = 0x00;
 		c = 0x13;
 		d = 0x00;
@@ -207,12 +198,12 @@ public class Dmgcpu implements ICpu {
 		ioHandlerReset();
 	}
 	
-	public Dmgcpu(String cart, GBCanvas gbc, byte[] flatState, int offset) {
+	public DmgcpuBW(String cart, GBCanvas gbc, byte[] flatState, int offset) {
 		cartName = cart;
 		initCartridge();
 		screen = gbc;
 		
-		graphicsChip = new GraphicsChip(this);
+		graphicsChip = new GraphicsChipBW(this);
 		
 		memory[6] = mainRam;
 		memory[7] = mainRam;
@@ -263,9 +254,6 @@ public class Dmgcpu implements ICpu {
 			// version 0 and 1 is original version, with interruptsEnabled encoded in version
 			interruptsEnabled = (version != 0);
 			
-			if (gbcFeatures) { //#if +gbc
-				throw new RuntimeException("Incompatible saved game");
-			} //#if
 		} else if (version == 2) {
 			// new byte for interruptsEnabled, support suspended gbc games
 			interruptsEnabled = (flatState[offset++] != 0);
@@ -314,10 +302,6 @@ public class Dmgcpu implements ICpu {
 		
 		offset = graphicsChip.unflatten(flatState, offset);
 		
-		if (gbcFeatures) { //#if +gbc
-			gbcRamBank = flatState[offset++] & 0xff;
-			hdmaRunning = flatState[offset++] != 0;
-		} //#if
 
 		setPC(pc);
 		
@@ -328,9 +312,6 @@ public class Dmgcpu implements ICpu {
 	public byte[] flatten() {
 		int size = cartName.length() + 1 + 35 + mainRam.length + 0x0200 + 12 
 				+ 0x2000 * cartRam.length + 10 + 0x2000 + 48 + 6 + rtcReg.length;
-		if (gbcFeatures) { //#if +gbc
-			size += 2 + 130 + 0x2000;
-		} //#if
 		
 		byte[] flatState = new byte[size];
 		int offset = 0;
@@ -402,10 +383,6 @@ public class Dmgcpu implements ICpu {
 		
 		offset = graphicsChip.flatten(flatState, offset);
 		
-		if (gbcFeatures) { //#if +gbc
-			flatState[offset++] = (byte) gbcRamBank;
-			flatState[offset++] = (byte) (hdmaRunning ? 1 : 0);
-		} //#if
 
 		if (offset != flatState.length)
 			throw new RuntimeException("flatten offset error:" + Integer.toString(offset, 16) + ", " + Integer.toString(flatState.length, 16));
@@ -417,25 +394,6 @@ public class Dmgcpu implements ICpu {
 		*  the memory
 		*/
 	public final int addressRead(int addr) {
-		if (gbcFeatures) { //#if +gbc
-			if (addr < 0xa000) {
-				return memory[addr >> 13][addr & 0x1fff];
-			} else if (addr < 0xc000) {
-				if (currentRamBank >= 8) { // real time clock
-					rtcSync();
-					return rtcReg[currentRamBank-8];
-				} else
-					return memory[addr >> 13][addr & 0x1fff];
-			} else if ((addr & 0x1000) == 0) {
-				return mainRam[addr & 0x0fff];
-			} else if (addr < 0xfe00) {
-				return mainRam[(addr & 0x0fff) + gbcRamBank * 0x1000];
-			} else if (addr < 0xFF00) {
-				return (oam[addr - 0xFE00] & 0x00FF);
-			} else {
-				return ioRead(addr - 0xFF00);
-			}
-		} else { //#if -gbc
 			if (addr < 0xa000) {
 				return memory[addr >> 13][addr & 0x1fff];
 			} else if (addr < 0xc000) {
@@ -451,60 +409,12 @@ public class Dmgcpu implements ICpu {
 			} else {
 				return ioRead(addr - 0xFF00);
 			}
-		} //#if
 	}
 	
 	/** Performs a CPU address space write.  Maps all of the relevant object into the right parts of
 		*  memory.
 		*/
 	public final void addressWrite(int addr, int data) {
-		if (gbcFeatures) { //#if +gbc
-			int bank = addr >> 12;
-			switch (bank) {
-				case 0x0:
-				case 0x1:
-				case 0x2:
-				case 0x3:
-				case 0x4:
-				case 0x5:
-				case 0x6:
-				case 0x7:
-					cartridgeWrite(addr, data);
-					break;
-
-				case 0x8:
-				case 0x9:
-					graphicsChip.addressWrite(addr - 0x8000, (byte) data);
-					break;
-
-				case 0xA:
-				case 0xB:
-					cartridgeWrite(addr, data);
-					break;
-
-				case 0xC:
-					mainRam[addr - 0xC000] = (byte) data;
-					break;
-					
-				case 0xD:
-					mainRam[addr - 0xD000 + gbcRamBank * 0x1000] = (byte) data;
-					break;
-
-				case 0xE:
-					mainRam[addr - 0xE000] = (byte) data;
-					break;
-					
-				case 0xF:
-					if (addr < 0xFE00) {
-						mainRam[addr - 0xF000 + gbcRamBank * 0x1000] = (byte) data;
-					} else if (addr < 0xFF00) {
-						oam[addr - 0xFE00] = (byte) data;
-					} else {
-						ioWrite(addr - 0xFF00, data);
-					}
-					break;
-			}
-		} else { //#if -gbc
 			int bank = addr >> 13;
 			switch (bank) {
 				case 0x0:
@@ -536,7 +446,6 @@ public class Dmgcpu implements ICpu {
 					}
 					break;
 			}
-		} //#if
 	}
 	
 	private final void pushPC() {
@@ -617,29 +526,6 @@ public class Dmgcpu implements ICpu {
 		}
 	}
 	
-	//#if +gbc
-	private void performHdma() {
-		int dmaSrc = ((registers[0x51] & 0xff) << 8)
-				+ ((registers[0x52] & 0xff) & 0xF0);
-		int dmaDst = ((registers[0x53] & 0x1F) << 8)
-				+ (registers[0x54] & 0xF0) + 0x8000;
-
-		for (int r = 0; r < 16; r++) {
-			addressWrite(dmaDst + r, addressRead(dmaSrc + r));
-		}
-
-		dmaSrc += 16;
-		dmaDst += 16;
-		registers[0x51] = (byte) ((dmaSrc & 0xFF00) >> 8);
-		registers[0x52] = (byte) (dmaSrc & 0x00F0);
-		registers[0x53] = (byte) ((dmaDst & 0x1F00) >> 8);
-		registers[0x54] = (byte) (dmaDst & 0x00F0);
-
-		if (registers[0x55] == 0)
-			hdmaRunning = false;
-		registers[0x55]--;
-	}
-	//#if
 
 	/** If an interrupt is enabled an the interrupt register shows that it has occured, jump to
 		*  the relevant interrupt vector address
@@ -695,10 +581,6 @@ public class Dmgcpu implements ICpu {
 			// to mode 2, but this is faster.
 			registers[0x44]++;
 			
-			if (gbcFeatures) { //#if +gbc
-				if (hdmaRunning)
-					performHdma();
-			} //#if
 
 			// send the line to graphic chip
 			int line = registers[0x44] & 0xff;
@@ -772,10 +654,6 @@ public class Dmgcpu implements ICpu {
 			localPC = pc & 0x1fff;
 			globalPC = pc & 0xe000;
 			decoderMaxCruise = (pc < 0xe000) ? 0x1ffd : 0x1dfd;
-			if (gbcFeatures) { //#if +gbc
-				if (gbcRamBank > 1 && pc >= 0xC000)
-					decoderMaxCruise &= 0x0fff; // can't cruise in switched ram bank
-			} //#if
 		} else {
 			decoderMemory = registers;
 			localPC = pc & 0xff;
@@ -1104,25 +982,6 @@ public class Dmgcpu implements ICpu {
 				case 0x10: // STOP
 					localPC++;
 					
-					if (gbcFeatures) { //#if +gbc
-						if ((registers[0x4D] & 0x01) != 0) {
-							int newKey1Reg = registers[0x4D] & 0xFE;
-							int multiplier = 1;
-							if ((newKey1Reg & 0x80) != 0) {
-								newKey1Reg &= 0x7F;
-							} else {
-								multiplier = 2;
-								newKey1Reg |= 0x80;
-							}
-							
-							INSTRS_PER_HBLANK = BASE_INSTRS_PER_HBLANK * multiplier;
-							INSTRS_PER_DIV = BASE_INSTRS_PER_DIV * multiplier;
-							INSTRS_IN_MODE_0 = BASE_INSTRS_IN_MODE_0 * multiplier;
-							INSTRS_IN_MODE_0_2 = BASE_INSTRS_IN_MODE_0_2 * multiplier;
-
-							registers[0x4D] = (byte) newKey1Reg;
-						}
-					} //#if
 
 					break;
 				case 0x11: // LD DE, nnnn
@@ -1928,9 +1787,6 @@ public class Dmgcpu implements ICpu {
 		ioWrite(0x47, 0xFC);
 		ioWrite(0x48, 0xFF);
 		ioWrite(0x49, 0xFF);
-		//#if +gbc
-		hdmaRunning = false;
-		//#if
 	}
 	
 	/** Read data from IO Ram */
@@ -2086,13 +1942,9 @@ public class Dmgcpu implements ICpu {
 				
 				// BIT 0
 				if ((data & 0x01) == 0) {
-					if (gbcFeatures) { //#if +gbc
-						graphicsChip.spritePriorityEnabled = false;
-					} else { //#if -gbc
 						// this emulates the gbc-in-gb-mode, not the original gb-mode
 						graphicsChip.bgEnabled = false;
 						graphicsChip.winEnabled = false;
-					} //#if
 				}
 				
 				registers[0x40] = (byte) data;
@@ -2145,91 +1997,6 @@ public class Dmgcpu implements ICpu {
 				registers[num] = (byte) data;
 				break;
 				
-				//#if +gbc
-			case 0x4F: // FF4F - VRAM Bank - GBC only
-				if (gbcFeatures) { //#if +gbc
-					graphicsChip.setVRamBank(data & 0x01);
-				} //#if +gbc
-				registers[0x4F] = (byte) data;
-				break;
-				
-			case 0x55: // FF55 - HDMA5 - GBC only
-				if ((!hdmaRunning) && ((registers[0x55] & 0x80) == 0) && ((data & 0x80) == 0)) {
-					int dmaSrc = ((registers[0x51] & 0xff) << 8) + (registers[0x52] & 0xF0);
-					int dmaDst = ((registers[0x53] & 0x1F) << 8) + (registers[0x54] & 0xF0) + 0x8000;
-					int dmaLen = ((data & 0x7F) * 16) + 16;
-
-					for (int r = 0; r < dmaLen; r++) {
-						addressWrite(dmaDst + r, addressRead(dmaSrc + r));
-					}
-				} else {
-					if ((data & 0x80) != 0) {
-						hdmaRunning = true;
-						registers[0x55] = (byte) (data & 0x7F);
-						break;
-					} else if ((hdmaRunning) && ((data & 0x80) == 0)) {
-						hdmaRunning = false;
-					}
-				}
-
-				registers[0x55] = (byte) data;
-				break;
-
-
-			case 0x68: // FF68 - Background Palette Index - GBC only
-				if (gbcFeatures) { //#if +gbc
-					registers[0x69] = (byte) graphicsChip.getGBCPalette(data & 0x3f);
-				} //#if +gbc
-				registers[0x68] = (byte) data;
-				break;
-
-			case 0x69: // FF69 - Background Palette Data - GBC only
-				if (gbcFeatures) { //#if +gbc
-					graphicsChip.setGBCPalette(registers[0x68] & 0x3f, data & 0xff);
-
-					if (registers[0x68] < 0) { // high bit = autoincrement
-						int next = ((registers[0x68] + 1) & 0x3f);
-						registers[0x68] = (byte) (next + 0x80);
-						registers[0x69] = (byte) graphicsChip.getGBCPalette(next);
-					}
-				} //#if +gbc
-				break;
-
-			case 0x6A: // FF6A - Sprite Palette Index - GBC only
-				if (gbcFeatures) { //#if +gbc
-					registers[0x6B] = (byte) graphicsChip.getGBCPalette((data & 0x3f) + 0x40);
-				} //#if +gbc
-				registers[0x6A] = (byte) data;
-				break;
-
-			case 0x6B: // FF6B - Sprite Palette Data - GBC only
-				if (gbcFeatures) { //#if +gbc
-					graphicsChip.setGBCPalette((registers[0x6A] & 0x3f) + 0x40, data & 0xff);
-
-					if (registers[0x6A] < 0) { // high bit = autoincrement
-						int next = ((registers[0x6A] + 1) & 0x3f);
-						registers[0x6A] = (byte) (next + 0x80);
-						registers[0x6B] = (byte) graphicsChip.getGBCPalette(next + 0x40);
-					}
-				} //#if +gbc
-				break;
-
-			case 0x70: // FF70 - GBC Work RAM bank
-				if (gbcFeatures) { //#if +gbc
-					if ((data & 0x07) < 2) {
-						gbcRamBank = 1;
-					} else {
-						gbcRamBank = data & 0x07;
-					}
-					
-					if (globalPC >= 0xC000) {
-						// verify cruising if executing in RAM
-						setPC(globalPC + localPC);
-					}
-				} //#if +gbc
-				registers[0x70] = (byte) data;
-				break;
-				//#if
 				
 			case 0xff:
 				registers[0xff] = (byte) data;
@@ -2263,16 +2030,8 @@ public class Dmgcpu implements ICpu {
 			
 			cartType = firstBank[0x0147] & 0xff;
 			int numRomBanks = lookUpCartSize(firstBank[0x0148]); // Determine the number of 16kb rom banks
-			//#if +gbc
-			gbcFeatures = ((firstBank[0x143] & 0x80) == 0x80); //#if +gbc
-			//#if
 			
-			if (gbcFeatures) { //#if +gbc
-				mainRam = new byte[0x8000]; // 32 kB
-				gbcRamBank = 1;
-			} else { //#if -gbc
 				mainRam = new byte[0x2000]; // 8 kB
-			} //#if
 			
 			if (numRomBanks <= MeBoy.lazyLoadingThreshold) {
 				rom = new byte[numRomBanks * 2][0x2000]; // Recreate the ROM array with the correct size
@@ -2316,11 +2075,7 @@ public class Dmgcpu implements ICpu {
 			
 			MeBoy.log("Loaded '" + cartName + "'. " + numRomBanks + " banks = "
 							+ (numRomBanks * 16) + " kB, " + numRamBanks + " RAM banks.");
-			if (gbcFeatures) { //#if +gbc
-				MeBoy.log("Type: " + cartType + " (color)");
-			} else { //#if -gbc
 				MeBoy.log("Type: " + cartType + " (bw)");
-			} //#if
 			
 			if (cartType == 6 && numRamBanks == 0)
 				numRamBanks = 1; // fixme, this is not ideal. carttype6 has battery but not ram?

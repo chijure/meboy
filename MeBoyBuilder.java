@@ -27,9 +27,6 @@ public class MeBoyBuilder {
 			int maxFileSize = banksPerFile << 14;
 			byte[] buf = new byte[maxFileSize];
 			int r;
-			for (String[] copyName : files) {
-				InputStream tis = ClassLoader.getSystemClassLoader().getResourceAsStream(
-						copyName[0]);
 
 			boolean version12compat = false;
 			
@@ -57,7 +54,7 @@ public class MeBoyBuilder {
 					message.append(". Add a ROM file, or finish building MeBoy.jar?");
 
 				int response = JOptionPane.showOptionDialog(null, string2JTA(message.toString()),
-						"MeBoyBuilder 1.3.1", 0, JOptionPane.PLAIN_MESSAGE, null, new Object[] {
+						"MeBoyBuilder 1.4", 0, JOptionPane.PLAIN_MESSAGE, null, new Object[] {
 								"Add ROM", "Finish", "Update options"}, "Add ROM");
 
 				if (response == 1 || response == -1) {
@@ -69,18 +66,17 @@ public class MeBoyBuilder {
 							"game memory with MeBoy 1.1 and 1.2. If you are updating from 1.1 or 1.2 and want to keep " +
 							"your saved games, please select the 1.2-compatible " +
 							"option below to use the \"old\" method of saving. (The new features " +
-							"in 1.3.1 will work even if you select the 1.2-compatble option.)\n\n" +
+							"in 1.4 will work even if you select the 1.2-compatble option.)\n\n" +
 							"Your suspended game will show up as \"1: (From 1.1/1.2)\" in the \"Resume " +
 							"Game\" list. Please note that suspended games from combined GB/GBC games (e.g. " +
-							"Zelda DX) can not be transferred from 1.2 to 1.3 or later!\n\n" +
+							"Zelda DX) can not be transferred from 1.2 to 1.4!\n\n" +
 							"The battery-backed game memory is always transferable, so when possible, " +
 							"please save your progress by using the game's own save feature (not by suspending) before " +
-							"upgrading from 1.1 or 1.2 to 1.3 or later.\n\n" +
-							"If you are a new user or upgrade " +
-							"from 1.3, please select the default option.";
+							"upgrading from 1.1 or 1.2 to 1.4.\n\n" +
+							"If you have not previously installed 1.1 or 1.2, please select the default option.";
 					
 					response = JOptionPane.showOptionDialog(null, string2JTA(m),
-						"MeBoyBuilder 1.3.1", 0, JOptionPane.PLAIN_MESSAGE, null, new Object[] {
+						"MeBoyBuilder 1.4", 0, JOptionPane.PLAIN_MESSAGE, null, new Object[] {
 								"Default", "1.2-compatible"}, "Default");
 					if (response == 1)
 						version12compat = true;
@@ -208,9 +204,9 @@ public class MeBoyBuilder {
 			String manifestName = version12compat ? "MEMANIFEST12" : "MEMANIFEST";
 
 			// copy MeBoy and manifest files
-			String[][] files = new String[][] { { "Dmgcpu.class"},
+			String[][] files = new String[][] { { "DmgcpuBW.class"}, { "DmgcpuColor.class"},
 					{ "GBCanvas.class"},
-					{ "GraphicsChip.class"}, { "MeBoy.class"},
+					{ "GraphicsChipBW.class"}, { "GraphicsChipColor.class"}, { "ICpu.class"}, { "MeBoy.class"},
 					{ manifestName, "META-INF/MANIFEST.MF"}};
 			for (String[] copyName : files) {
 				InputStream tis = ClassLoader.getSystemClassLoader().getResourceAsStream(
@@ -278,7 +274,7 @@ public class MeBoyBuilder {
 					.showOptionDialog(
 							null,
 							string2JTA("Do you want MeBoyBuilder to automatically check for program updates when launched?"),
-							"MeBoyBuilder 1.3.1", 0, JOptionPane.PLAIN_MESSAGE, null, new Object[] {
+							"MeBoyBuilder 1.4", 0, JOptionPane.PLAIN_MESSAGE, null, new Object[] {
 									"Don't check", "Check"}, "Check");
 
 			if (response == 1) {
@@ -299,7 +295,7 @@ public class MeBoyBuilder {
 			
 			try {
 				// read info from home page
-				URL inputURL = new URL("http://arktos.se/meboy/update/131.txt");
+				URL inputURL = new URL("http://arktos.se/meboy/update/140.txt");
 				URLConnection urlConnection = inputURL.openConnection();
 				urlConnection.connect();
 
@@ -317,7 +313,7 @@ public class MeBoyBuilder {
 					String message = new String(buf, 0, done);
 
 					int response = JOptionPane.showOptionDialog(null,
-							string2JTA(message.toString()), "MeBoyBuilder 1.3.1", 0,
+							string2JTA(message.toString()), "MeBoyBuilder 1.4", 0,
 							JOptionPane.PLAIN_MESSAGE, null, new Object[] { "Cancel",
 									"Visit homepage"}, "Visit homepage");
 
@@ -326,7 +322,7 @@ public class MeBoyBuilder {
 					}
 				} else if (firstLaunch) {
 					JOptionPane.showMessageDialog(null,
-							string2JTA("1.3.1 is the most recent version."), "MeBoyBuilder 1.3.1",
+							string2JTA("1.4 is the most recent version."), "MeBoyBuilder 1.4",
 							JOptionPane.WARNING_MESSAGE);
 				}
 			} catch (Exception e) {

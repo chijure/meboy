@@ -36,7 +36,11 @@ The main class offers a list of games, read from the file "carts.txt".
 
 public class MeBoy extends MIDlet implements CommandListener {
 	public static final boolean debug = false;
+	// public static boolean timing;
 	public static int rotations = 0;
+	public static int maxFrameSkip = 3;
+	public static boolean enableScaling = true;
+	public static boolean keepProportions = false;
 	public static int lazyLoadingThreshold = 64; // number of banks, each 0x4000 bytes = 16kB
 	public static int suspendCounter = 1; // next index for saved games
 	public static String[] suspendIndex = new String[0];
@@ -52,9 +56,9 @@ public class MeBoy extends MIDlet implements CommandListener {
 	private TextField frameSkipField;
 	private TextField rotationField;
 	private TextField loadThresholdField;
+	private ChoiceGroup scalingGroup;
 	
 	private static Form logForm = new Form("log");
-	public static String lastLog = "";
 	
 	private static MeBoy instance;
 	
@@ -98,18 +102,29 @@ public class MeBoy extends MIDlet implements CommandListener {
 		display.setCurrent(logForm);
 	}
 	
+	public static void showAbout() {
+		Form aboutForm = new Form("About MeBoy");
+		aboutForm.addCommand(new Command("Return", Command.BACK, 0));
+		aboutForm.append("MeBoy 1.4 © Bjšrn Carlin, 2005-2007.\n" +
+			"http://arktos.se/meboy/");
+		
+		aboutForm.setCommandListener(instance);
+		display.setCurrent(aboutForm);
+	}
+	
 	public void unloadCart() {
 		mainMenuAction();
 		gbCanvas = null;
 	}
 	
 	private void mainMenuAction() {
-		mainMenu = new List("MeBoy 1.3.1", List.IMPLICIT);
+		mainMenu = new List("MeBoy 1.4", List.IMPLICIT);
 		mainMenu.append("New Game", null);
 		if (suspendIndex.length > 0)
 			mainMenu.append("Resume Game", null);
 		mainMenu.append("Settings", null);
 		mainMenu.append("Show log", null);
+		mainMenu.append("About MeBoy", null);
 		mainMenu.append("Exit", null);
 		mainMenu.setCommandListener(this);
 		display.setCurrent(mainMenu);
@@ -184,12 +199,17 @@ public class MeBoy extends MIDlet implements CommandListener {
 			} else if (item == "Settings") {
 				settingsForm = new Form("Settings");
 				
-				frameSkipField = new TextField("Frame skip", Integer.toString(GraphicsChip.maxFrameSkip), 2, TextField.NUMERIC);
+				frameSkipField = new TextField("Frame skip", Integer.toString(maxFrameSkip), 2, TextField.NUMERIC);
 				settingsForm.append(frameSkipField);
 				rotationField = new TextField("Number of 90 deg turns", Integer.toString(rotations), 1, TextField.NUMERIC);
 				settingsForm.append(rotationField);
 				loadThresholdField = new TextField("Max number of 16kB banks to load", Integer.toString(lazyLoadingThreshold), 3, TextField.NUMERIC);
 				settingsForm.append(loadThresholdField);
+				
+				scalingGroup = new ChoiceGroup("Scaling", ChoiceGroup.MULTIPLE, new String[] {"Shrink to fit", "Keep proportions"}, null);
+				scalingGroup.setSelectedIndex(0, enableScaling);
+				scalingGroup.setSelectedIndex(1, keepProportions);
+				settingsForm.append(scalingGroup);
 				
 				settingsForm.addCommand(new Command("Save", Command.OK, 1));
 				settingsForm.setCommandListener(this);
@@ -197,6 +217,8 @@ public class MeBoy extends MIDlet implements CommandListener {
 			} else if (item == "Show log") {
 				log("free memory: " + Runtime.getRuntime().freeMemory() + "/" + Runtime.getRuntime().totalMemory());
 				showLog();
+			} else if (item == "About MeBoy") {
+				showAbout();
 			} else if (item == "Exit") {
 				destroyApp(true);
 				notifyDestroyed();
@@ -289,9 +311,11 @@ public class MeBoy extends MIDlet implements CommandListener {
 			}
 		} else if (s == settingsForm) {
 			int f = Integer.parseInt(frameSkipField.getString());
-			GraphicsChip.maxFrameSkip = Math.max(Math.min(f, 59), 0);
+			maxFrameSkip = Math.max(Math.min(f, 59), 0);
 			rotations = Integer.parseInt(rotationField.getString()) & 3;
 			lazyLoadingThreshold = Math.max(Integer.parseInt(loadThresholdField.getString()), 20);
+			enableScaling = scalingGroup.isSelected(0);
+			keepProportions = scalingGroup.isSelected(1);
 			GBCanvas.writeSettings();
 			display.setCurrent(mainMenu);
 		}
@@ -301,7 +325,6 @@ public class MeBoy extends MIDlet implements CommandListener {
 		if (s == null)
 			return;
 		logForm.append(s + '\n');
-		lastLog = s;
 		if (debug)
 			System.out.println(s);
 	}

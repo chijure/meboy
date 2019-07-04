@@ -14,6 +14,17 @@ Credits
 MeBoy Change Log
 -
 
+version 1.4: 22 Jun 2007
+-
+
+* Added "Shrink to fit" for phones with small screens
+* Fixed potential stack handling bug for GBC games
+* Fixed several register initialization bugs
+* Fixed several GBC palette reading, writing and initialization bugs
+* Improved performance for GB games by using separate GB and GBC classes
+* Improved performance when an entire ROM does not fit in memory
+* Slightly improved performance when initializing images (still readlly slow though)
+
 version 1.3.1: 29 May 2007
 -
 

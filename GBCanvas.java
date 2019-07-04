@@ -33,11 +33,13 @@ import javax.microedition.lcdui.game.Sprite;
 
 public class GBCanvas extends Canvas implements CommandListener {
 	public MeBoy parent;
-	private Dmgcpu cpu;
-	private int w, h, l, t, sw, sh, trans;
+	private ICpu cpu;
+	private int w, h, l, t;
+	private int sw, sh, trans; // translation, and screen size (on screen, i.e. scaled and rotated if applicable)
+	private int ssw, ssh; // source screen width and height (possibly scaled, not rotated)
 	private boolean clear = true;
 	boolean showFps = MeBoy.debug;
-	private int[] previousTime = new int[4];
+	private int[] previousTime = new int[8];
 	private int previousTimeIx;
 	private boolean fullScreen;
 	
@@ -94,8 +96,10 @@ public class GBCanvas extends Canvas implements CommandListener {
 		}
 		cartName = sb.toString();
 		
-		cpu = new Dmgcpu(cartName, this, b, i+1);
-		
+		if (isColor(cartName))
+			cpu = new DmgcpuColor(cartName, this, b, i+1);
+		else
+			cpu = new DmgcpuBW(cartName, this, b, i+1);
 		setDimensions();
 		
 		new Thread(cpu).start();
@@ -107,8 +111,12 @@ public class GBCanvas extends Canvas implements CommandListener {
 		parent = p;
 		cartName = cart;
 		
-		cpu = new Dmgcpu(cart, this);
-		cpu.timing = timing;
+		// MeBoy.timing = timing;
+		
+		if (isColor(cart))
+			cpu = new DmgcpuColor(cart, this);
+		else
+			cpu = new DmgcpuBW(cart, this);
 		
 		if (cpu.hasBattery())
 			loadCartRam();
@@ -118,19 +126,48 @@ public class GBCanvas extends Canvas implements CommandListener {
 		new Thread(cpu).start();
 	}
 	
+	private boolean isColor(String cartName) {
+		java.io.InputStream is = null;
+		
+		try {
+			is = getClass().getResourceAsStream(cartName + 0);
+			
+			if (is.skip(0x143) != 0x143)
+				throw new RuntimeException("failed skipping to 0x143");
+			int i = is.read();
+			if (i >= 0 && (i & 0x80) == 0) {
+				return false;
+			}
+		} catch (Exception e) {
+			if (MeBoy.debug)
+				e.printStackTrace();
+		} finally {
+			try {
+			if (is != null)
+				is.close();
+			} catch (Exception ex) {}
+		}
+		return true;
+	}
+	
 	public void setDimensions() {
 		w = getWidth();
 		h = getHeight();
 		
 		int[] transs = new int[] {0, 5, 3, 6};
 		trans = transs[MeBoy.rotations];
+		boolean rotate = (MeBoy.rotations & 1) != 0;
 		
-		if ((MeBoy.rotations & 1) == 1) {
-			sw = 144;
-			sh = 160;
-		} else {
-			sw = 160;
-			sh = 144;
+		if (MeBoy.enableScaling) {
+			int deltah = showFps ? -16: 0;
+			cpu.setScale(rotate ? (h+deltah) : w, rotate ? w : (h+deltah));
+		}
+		ssw = sw = 20 * cpu.getTileWidth();
+		ssh = sh = 18 * cpu.getTileHeight();
+		
+		if (rotate) {
+			sw = ssh;
+			sh = ssw;
 		}
 		
 		l = (w - sw) / 2;
@@ -143,8 +180,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 		if (t < 0)
 			t = 0;
 		
-		cpu.graphicsChip.left = trans == 0 ? l : 0;
-		cpu.graphicsChip.top = trans == 0 ? t : 0;
+		cpu.setTranslation(trans == 0 ? l : 0, trans == 0 ? t : 0);
 	}
 	
 	public void keyReleased(int keyCode) {
@@ -195,7 +231,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 				removeCommand(pause);
 				addCommand(resume);
 				
-				cpu.terminate = true;
+				cpu.terminate();
 			} else if (label == "Resume" && !settingKeys) {
 				removeCommand(resume);
 				addCommand(pause);
@@ -215,10 +251,10 @@ public class GBCanvas extends Canvas implements CommandListener {
 				settingKeys = true;
 				keySetCounter = 0;
 			} else if (label == "Suspend" && !settingKeys) {
-				if (!cpu.terminate) {
+				if (!cpu.isTerminated()) {
 					removeCommand(pause);
 					addCommand(resume);
-					cpu.terminate = true;
+					cpu.terminate();
 					Thread.sleep(100);
 				}
 				
@@ -257,12 +293,12 @@ public class GBCanvas extends Canvas implements CommandListener {
 		
 		int now = (int) System.currentTimeMillis();
 		// calculate moving-average fps
-		// 17 ms * 60 fps * 2*4 seconds = 8160 ms
-		int estfps = ((8160 + now - previousTime[previousTimeIx]) / (now - previousTime[previousTimeIx])) >> 1;
+		// 17 ms * 60 fps * 2*8 seconds = 16320 ms
+		int estfps = ((16320 + now - previousTime[previousTimeIx]) / (now - previousTime[previousTimeIx])) >> 1;
 		previousTime[previousTimeIx] = now;
-		previousTimeIx = (previousTimeIx + 1) & 3;
+		previousTimeIx = (previousTimeIx + 1) & 7;
 		
-		g.drawString(estfps + " fps * " + (cpu.graphicsChip.lastSkipCount+1), l+1, t+sh, 20);
+		g.drawString(estfps + " fps * " + (cpu.getLastSkipCount() + 1), l+1, t+sh, 20);
 	}
 	
 	public final void paint(Graphics g) {
@@ -272,10 +308,10 @@ public class GBCanvas extends Canvas implements CommandListener {
 			}
 			g.setClip(l, t, sw, sh);
 			if (trans == 0) {
-				cpu.graphicsChip.draw(g);
+				cpu.draw(g);
 			} else {
-				cpu.graphicsChip.draw(bufg);
-				g.drawRegion(buf, 0, 0, 160, 144, trans, l, t, 20);
+				cpu.draw(bufg);
+				g.drawRegion(buf, 0, 0, ssw, ssh, trans, l, t, 20);
 			}
 		} else if (settingKeys) {
 			g.setColor(0x446688);
@@ -299,10 +335,10 @@ public class GBCanvas extends Canvas implements CommandListener {
 			
 			g.setClip(l, t, sw, sh);
 			if (trans == 0) {
-				cpu.graphicsChip.draw(g);
+				cpu.draw(g);
 			} else {
-				cpu.graphicsChip.draw(bufg);
-				g.drawRegion(buf, 0, 0, 160, 144, trans, l, t, 20);
+				cpu.draw(bufg);
+				g.drawRegion(buf, 0, 0, ssw, ssh, trans, l, t, 20);
 			}
 		}
 	}
@@ -328,12 +364,13 @@ public class GBCanvas extends Canvas implements CommandListener {
 			int bLength = 52;
 			for (int i = 0; i < MeBoy.suspendIndex.length; i++)
 				bLength += 1 + MeBoy.suspendIndex[i].length();
+			bLength++;
 			
 			byte[] b = new byte[bLength];
 			
 			for (int i = 0; i < 8; i++)
 				setInt(b, i * 4, key[i]);
-			setInt(b, 32, GraphicsChip.maxFrameSkip);
+			setInt(b, 32, MeBoy.maxFrameSkip);
 			setInt(b, 36, MeBoy.rotations);
 			setInt(b, 40, MeBoy.lazyLoadingThreshold);
 			setInt(b, 44, MeBoy.suspendCounter);
@@ -346,6 +383,8 @@ public class GBCanvas extends Canvas implements CommandListener {
 				for (int j = 0; j < s.length(); j++)
 					b[index++] = (byte) s.charAt(j);
 			}
+			
+			b[index++] = (byte) ((MeBoy.enableScaling ? 1 : 0) + (MeBoy.keepProportions ? 2 : 0));
 			
 			if (rs.getNumRecords() == 0) {
 				rs.addRecord(b, 0, bLength);
@@ -369,7 +408,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 				for (int i = 0; i < 8; i++)
 					key[i] = getInt(b, i * 4);
 				if (b.length >= 36)
-					GraphicsChip.maxFrameSkip = getInt(b, 32);
+					MeBoy.maxFrameSkip = getInt(b, 32);
 				if (b.length >= 40)
 					MeBoy.rotations = getInt(b, 36);
 				if (b.length >= 44)
@@ -386,6 +425,12 @@ public class GBCanvas extends Canvas implements CommandListener {
 						
 						MeBoy.suspendIndex[i] = new String(b, index, slen);
 						index += slen;
+					}
+					
+					if (b.length > index) {
+						MeBoy.enableScaling = (b[index] & 1) != 0;
+						MeBoy.keepProportions = (b[index] & 2) != 0;
+						index++;
 					}
 				} else
 					MeBoy.suspendIndex = new String[0];
@@ -404,7 +449,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 		try {
 			RecordStore rs = RecordStore.openRecordStore(cartName, true);
 			
-			byte[][] ram = cpu.cartRam;
+			byte[][] ram = cpu.getCartRam();
 			
 			int bankCount = ram.length;
 			int bankSize = ram[0].length;
@@ -415,7 +460,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 			for (int i = 0; i < bankCount; i++)
 				System.arraycopy(ram[i], 0, b, i * bankSize, bankSize);
 			
-			System.arraycopy(cpu.rtcReg, 0, b, bankCount * bankSize, 5);
+			System.arraycopy(cpu.getRtcReg(), 0, b, bankCount * bankSize, 5);
 			long now = System.currentTimeMillis();
 			setInt(b, bankCount * bankSize + 5, (int) (now >> 32));
 			setInt(b, bankCount * bankSize + 9, (int) now);
@@ -438,7 +483,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 			RecordStore rs = RecordStore.openRecordStore(cartName, true);
 			
 			if (rs.getNumRecords() > 0) {
-				byte[][] ram = cpu.cartRam;
+				byte[][] ram = cpu.getCartRam();
 				int bankCount = ram.length;
 				int bankSize = ram[0].length;
 				
@@ -449,7 +494,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 				
 				if (b.length == bankCount * bankSize + 13) {
 					// load real time clock
-					System.arraycopy(b, bankCount * bankSize, cpu.rtcReg, 0, 5);
+					System.arraycopy(b, bankCount * bankSize, cpu.getRtcReg(), 0, 5);
 					long time = getInt(b, bankCount * bankSize + 5);
 					time = (time << 32) + ((long) getInt(b, bankCount * bankSize + 9) & 0xffffffffL);
 					time = System.currentTimeMillis() - time;
