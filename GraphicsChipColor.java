@@ -2,7 +2,7 @@
 
 MeBoy
 
-Copyright 2005-2007 Bjorn Carlin
+Copyright 2005-2008 Bjorn Carlin
 http://www.arktos.se/
 
 Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria
@@ -23,7 +23,7 @@ You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc., 59 Temple
 Place - Suite 330, Boston, MA 02111-1307, USA.
  
- */
+*/
 
 import javax.microedition.lcdui.*;
 
@@ -40,12 +40,7 @@ public class GraphicsChipColor {
 	/** Tile is flipped vertically */
 	private final int TILE_FLIPY = 2; // 0x40 in oam attributes
 	
-	/** Tile uses the first sprite palette */
-	private final int TILE_OBJ1 = 4; // reset 0x10 in oam attributes
-	
-	/** Tile uses the second sprite palette */
-	private final int TILE_OBJ2 = 8; // set 0x10 in oam attributes
-	
+
 	/** The current contents of the video memory, mapped in at 0x8000 - 0x9FFF */
 	private byte[] videoRam;
 	
@@ -129,7 +124,7 @@ public class GraphicsChipColor {
 	}
 	
 	
-	/** Create a new GraphicsChipColor connected to the speicfied CPU */
+	/** Create a new GraphicsChipColor connected to the specified CPU */
 	public GraphicsChipColor(DmgcpuColor d) {
 		cpu = d;
 		
@@ -536,21 +531,40 @@ public class GraphicsChipColor {
 		}
 		
 		int x1c, x2c, y1c, y2c;
+
+		int startx, starty;		
+		int deltax, deltay;
 		
-		y1c = tileHeight >> 1;
+		// set up scaling constants, for upscaling and downscaling
+		if (tileWidth > 8) {
+			startx = tileWidth - 5;
+			deltax = 8;
+		} else {
+			startx = tileWidth - 1;
+			deltax = 9;
+		}
+		if (tileHeight > 8) {
+			starty = tileHeight - 5;
+			deltay = 8;
+		} else {
+			starty = tileHeight - 1;
+			deltay = 9;
+		}
+		
+		y1c = starty;
 		y2c = 0;
 		for (int y = 0; y < tileHeight; y++) {
 			int num = weaveLookup[vram[offset] & 0xff] + (weaveLookup[vram[offset + 1] & 0xff] << 1);
 			if (num != 0)
 				transparent = false;
 			
-			x1c = tileWidth >> 1;
+			x1c = startx;
 			x2c = 0;
 			for (int x = tileWidth; --x >= 0; ) {
 				tempPix[pixix] = palette[paletteStart + (num & 3)];
 				pixix += pixixdx;
 				
-				x2c += 8;
+				x2c += deltax;
 				while (x2c > x1c) {
 					x1c += tileWidth;
 					num >>= 2;
@@ -558,7 +572,7 @@ public class GraphicsChipColor {
 			}
 			pixix += pixixdy;
 			
-			y2c += 8;
+			y2c += deltay;
 			while (y2c > y1c) {
 				y1c += tileHeight;
 				offset += 2;

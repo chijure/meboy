@@ -1,0 +1,60 @@
+Terug
+Over MeBoy
+MeBoy 1.6 © Björn Carlin, 2005-2008.
+http://arktos.se/meboy/
+MeBoy 1.6
+Nieuw spel
+Spel hervatten
+Instellingen
+Logboek openen
+Einde
+Selecteer Spel
+spellijst fout: 
+Verwijderen
+Verdubbelen
+Taal
+English
+Español
+Frames overslaan
+Aantal draaiingen van 90°
+Max aantal van 16kB banken om te laden
+Beeldinstellingen
+Op het scherm laten passen
+In verhoudingen houden
+Start in volledig scherm
+Gameboy Color
+GBC uitschakelen
+Opslaan
+vrij geheugen: 
+nieuwspel fout: 
+timing fout: 
+hervattings fout: 
+verwijderings fout: 
+verdubbelings fout: 
+taalbestand fout: 
+Pauze
+Hervatten
+rechts
+links
+omhoog
+omlaag
+a
+b
+select
+start
+Framerate verbergen
+Framerate laten zien
+Besturing instellen
+Opslaan
+Volledig scherm
+Spel stoppen
+opgeslagen naar
+opslaan mislukt: 
+druk op de
+knop voor
+Ελληνικά
+Português
+中文 (Chinese)
+Polski
+Deutsch
+Nederlands

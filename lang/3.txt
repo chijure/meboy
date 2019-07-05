@@ -1,0 +1,60 @@
+Voltar
+Sobre MeBoy
+MeBoy 1.6 © Björn Carlin, 2005-2008.
+http://arktos.se/meboy/
+MeBoy 1.6
+Novo Jogo
+Continuar Jogo
+Opções
+Mostrar Log
+Sair
+Selecionar Jogo
+erro na lista: 
+Deletar
+Duplicar
+Idioma
+English
+Español
+Pulo de Frame
+Numero de giros de 90°
+Número máx. de blocos de 16kB a carregar
+Ajustando
+Ajustar à tela
+Manter proporções
+Iniciar em tela cheia
+Gameboy Color
+Desativar GBC
+Salvar
+memória livre: 
+erro de novo jogo: 
+erro de timing: 
+erro ao continuar jogo: 
+erro ao deletar: 
+erro ao duplicar: 
+erro no aquivo de idioma: 
+Pausar
+Continuar
+direita
+esquerda
+cima
+baixo
+a
+b
+select
+start
+Ocultar FPS
+Mostrar FPS
+Config. Botões
+Salvar
+Tela cheia
+Fechar jogo
+salvo em: 
+falha ao salvar: 
+press. o
+botão para
+Ελληνικά
+Português
+中文 (Chinese)
+Polski
+Deutsch
+Nederlands

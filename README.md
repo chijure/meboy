@@ -14,6 +14,14 @@ Credits
 MeBoy Change Log
 -
 
+version 1.6: 3 Mar 2008
+-
+
+* Fixed "Scale to fit" bug for very large screens
+* Fixed bug causing some games to crash after hours of gameplay (Pokemon games should run butter now)
+* Fixed HDMA transfer status (Lemmings works now)
+* Spanish translation by Pendor (www.pendor.com.ar)
+
 version 1.5: 10 Sept 2007
 -
 

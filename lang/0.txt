@@ -1,0 +1,61 @@
+Return
+About MeBoy
+MeBoy 1.6 © Björn Carlin, 2005-2008.
+http://arktos.se/meboy/
+MeBoy 1.6
+New Game
+Resume Game
+Settings
+Show log
+Exit
+Select Game
+cartlist error: 
+Delete
+Duplicate
+Language
+English
+Español
+Frame skip
+Number of 90° turns
+Max number of 16kB banks to load
+Scaling
+Scale to fit
+Keep proportions
+Start in full screen
+Gameboy Color
+Disable GBC
+Save
+free memory: 
+newgame error: 
+timing error: 
+resumption error: 
+deletion error: 
+duplication error: 
+langfile error: 
+Pause
+Resume
+right
+left
+up
+down
+a
+b
+select
+start
+Hide framerate
+Show framerate
+Set buttons
+Suspend
+Full screen
+Unload cart
+suspended to
+failed suspend: 
+press the
+button for
+Ελληνικά
+Português
+中文 (Chinese)
+Polski
+Deutsch
+Nederlands
+

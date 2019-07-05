@@ -2,7 +2,7 @@
 
 MeBoy
 
-Copyright 2005-2007 Bjorn Carlin
+Copyright 2005-2008 Bjorn Carlin
 http://www.arktos.se/
 
 Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria
@@ -23,7 +23,7 @@ You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc., 59 Temple
 Place - Suite 330, Boston, MA 02111-1307, USA.
  
- */
+*/
 
 import javax.microedition.lcdui.*;
 
@@ -100,6 +100,8 @@ public class DmgcpuColor implements ICpu {
 	
 	public boolean interruptsEnabled = false;
 	public boolean interruptsArmed = false;
+	public boolean timaEnabled = false;
+	public boolean interruptEnableEnabled = false;
 	protected boolean p10Requested;
 	protected int gbcRamBank;
 	protected boolean hdmaRunning;
@@ -192,7 +194,9 @@ public class DmgcpuColor implements ICpu {
 		
 		nextHBlank = INSTRS_PER_HBLANK;
 		nextTimaOverflow = 0x7fffffff;
+		timaEnabled = false;
 		nextInterruptEnable = 0x7fffffff;
+		interruptEnableEnabled = false;
 		nextTimedInterrupt = INSTRS_PER_HBLANK;
 		
 		initIncDecFlags();
@@ -244,8 +248,10 @@ public class DmgcpuColor implements ICpu {
 		nextHBlank = GBCanvas.getInt(flatState, offset);
 		offset += 4;
 		nextTimaOverflow = GBCanvas.getInt(flatState, offset);
+		timaEnabled = nextTimaOverflow == 0x7fffffff; // not great, but backwards-compatible
 		offset += 4;
 		nextInterruptEnable = GBCanvas.getInt(flatState, offset);
+		interruptEnableEnabled = nextInterruptEnable == 0x7fffffff; // not great, but backwards-compatible
 		offset += 4;
 		nextTimedInterrupt = GBCanvas.getInt(flatState, offset);
 		offset += 4;
@@ -346,9 +352,9 @@ public class DmgcpuColor implements ICpu {
 		offset+=4;
 		GBCanvas.setInt(flatState, offset, nextHBlank);
 		offset+=4;
-		GBCanvas.setInt(flatState, offset, nextTimaOverflow);
-		offset+=4;
-		GBCanvas.setInt(flatState, offset, nextInterruptEnable);
+		GBCanvas.setInt(flatState, offset, timaEnabled ? nextTimaOverflow : 0x7fffffff);
+		offset += 4;
+		GBCanvas.setInt(flatState, offset, interruptEnableEnabled ? nextInterruptEnable : 0x7fffffff);
 		offset+=4;
 		GBCanvas.setInt(flatState, offset, nextTimedInterrupt);
 		offset+=4;
@@ -670,7 +676,7 @@ public class DmgcpuColor implements ICpu {
 
 				interruptsArmed = (registers[0xff] & registers[0x0f]) != 0;
 			}
-		} else if (instrCount - nextTimaOverflow >= 0) {
+		} else if (timaEnabled && instrCount - nextTimaOverflow >= 0) {
 			nextTimaOverflow += instrsPerTima * (0x100 - registers[0x06]);
 			
 			if ((registers[0xff] & INT_TIMA) != 0) {
@@ -679,12 +685,16 @@ public class DmgcpuColor implements ICpu {
 			}
 		}
 		
-		if (instrCount - nextInterruptEnable >= 0) {
+		if (interruptEnableEnabled && instrCount - nextInterruptEnable >= 0) {
 			interruptsEnabled = true;
-			
-			nextInterruptEnable = 0x7fffffff;
+
+			interruptEnableEnabled = false;
 		}
-		nextTimedInterrupt = nextHBlank - nextTimaOverflow < 0 ? nextHBlank : nextTimaOverflow;
+		
+		if (timaEnabled)
+			nextTimedInterrupt = nextHBlank - nextTimaOverflow < 0 ? nextHBlank : nextTimaOverflow;
+		else
+			nextTimedInterrupt = nextHBlank;
 	}
 	
 	public final void setPC(int pc) {
@@ -973,8 +983,6 @@ public class DmgcpuColor implements ICpu {
 		
 		int newf = 0;
 		int b1, b2, offset, b3;
-		
-		int f_szhc = F_SUBTRACT + F_ZERO + F_HALFCARRY;
 		
 		System.gc();
 		int startTime = (int) System.currentTimeMillis();
@@ -1803,6 +1811,7 @@ public class DmgcpuColor implements ICpu {
 				case 0xFB: // EI
 					nextInterruptEnable = instrCount;
 					nextTimedInterrupt = nextInterruptEnable;
+					interruptEnableEnabled = true;
 					// note: since initiateInterrupts is run after checkInterrupts, this
 					// causes the correct 1 instruction delay
 					break;
@@ -1826,7 +1835,7 @@ public class DmgcpuColor implements ICpu {
 					} else {
 						MeBoy.log("Unrecognized opcode (" + Integer.toHexString(b1) + ")");
 						terminate = true;
-						screen.parent.showLog();
+						MeBoy.showLog();
 						break;
 					}
 			}
@@ -1851,6 +1860,7 @@ public class DmgcpuColor implements ICpu {
 		ioWrite(0x47, 0xFC);
 		ioWrite(0x48, 0xFF);
 		ioWrite(0x49, 0xFF);
+		registers[0x55] = (byte) 0x80;
 		hdmaRunning = false;
 	}
 	
@@ -1886,7 +1896,7 @@ public class DmgcpuColor implements ICpu {
 			return (byte) ((instrCount - divReset - 1) / INSTRS_PER_DIV);
 		} else if (num == 0x05) {
 			// TIMA
-			if (nextTimaOverflow == 0x7fffffff)
+			if (!timaEnabled)
 				return 0;
 			
 			return ((instrCount + instrsPerTima * 0x100 - nextTimaOverflow) / instrsPerTima);
@@ -1934,7 +1944,7 @@ public class DmgcpuColor implements ICpu {
 				break;
 				
 			case 0x05: // TIMA
-				if (nextTimaOverflow < 0x7fffffff)
+				if (timaEnabled)
 					nextTimaOverflow = instrCount + instrsPerTima * (0x100 - (data & 0xff));
 				break;
 				
@@ -1958,8 +1968,9 @@ public class DmgcpuColor implements ICpu {
 							break;
 					}
 					nextTimaOverflow = instrCount + instrsPerTima * (0x100 - registers[0x06]); // this should probably read from whatever register[0x05] was before tima stopped/reset?
+					timaEnabled = true;
 				} else {
-					nextTimaOverflow = 0x7fffffff;
+					timaEnabled = false;
 				}
 				
 				break;
@@ -2068,27 +2079,27 @@ public class DmgcpuColor implements ICpu {
 				break;
 				
 			case 0x55: // FF55 - HDMA5 - GBC only
-				if ((!hdmaRunning) && ((registers[0x55] & 0x80) == 0) && ((data & 0x80) == 0)) {
+				if (!hdmaRunning && (data & 0x80) == 0) {
 					int dmaSrc = ((registers[0x51] & 0xff) << 8) + (registers[0x52] & 0xF0);
-					int dmaDst = ((registers[0x53] & 0x1F) << 8) + (registers[0x54] & 0xF0) + 0x8000;
+					int dmaDst = ((registers[0x53] & 0x1F) << 8) + (registers[0x54] & 0xF0);
 					int dmaLen = ((data & 0x7F) * 16) + 16;
 
 					for (int r = 0; r < dmaLen; r++) {
-						addressWrite(dmaDst + r, addressRead(dmaSrc + r));
+						graphicsChip.addressWrite(dmaDst + r, (byte) addressRead(dmaSrc + r));
 					}
+					// fixme, move instrCount?
+					
+					registers[0x55] = (byte) 0xff;
+				} else if ((data & 0x80) != 0) {
+					// start hdma
+					hdmaRunning = true;
+					registers[0x55] = (byte) (data & 0x7F);
 				} else {
-					if ((data & 0x80) != 0) {
-						hdmaRunning = true;
-						registers[0x55] = (byte) (data & 0x7F);
-						break;
-					} else if ((hdmaRunning) && ((data & 0x80) == 0)) {
-						hdmaRunning = false;
-					}
+					// stop hdma
+					hdmaRunning = false;
+					registers[0x55] |= 0x80;
 				}
-
-				registers[0x55] = (byte) data;
 				break;
-
 
 			case 0x68: // FF68 - Background Palette Index - GBC only
 					registers[0x69] = (byte) graphicsChip.getGBCPalette(data & 0x3f);

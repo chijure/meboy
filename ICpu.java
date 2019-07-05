@@ -2,7 +2,7 @@
 
 MeBoy
 
-Copyright 2005-2007 Bjorn Carlin
+Copyright 2005-2008 Bjorn Carlin
 http://www.arktos.se/
 
 Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria
@@ -23,7 +23,7 @@ You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc., 59 Temple
 Place - Suite 330, Boston, MA 02111-1307, USA.
  
- */
+*/
 
 import javax.microedition.lcdui.*;
 

@@ -1,0 +1,60 @@
+Powrót
+Informacje o programie
+MeBoy 1.6 © Björn Carlin, 2005-2008.
+http://arktos.se/meboy/
+MeBoy 1.6
+Nowa Gra
+Wznów Grę
+Ustawienia
+Pokaż log
+Wyjscie
+Wybierz Grę
+Błąd listy gier: 
+Usuń
+Duplikuj
+Język
+English
+Español
+Przeskok klatek
+Ilośc obrotów o 90°
+Max. liczba 16kB wczytanych części
+Skalowanie
+Dopasuj do ekranu
+Zachowaj proporcje
+Uruchom na pełnym ekranie
+Gameboy Color
+Zablokuj GBC
+Zapisz
+Wolna pamięc: 
+błąd nowej gry: 
+błąd koordynacji: 
+błąd wznawiania: 
+błąd usuwania: 
+błąd duplikacji: 
+wadliwy plik językowy: 
+Pauza
+Wznów
+prawo
+lewo
+góra
+dół
+a
+b
+select
+start
+Ukryj FPS
+Pokaz FPS
+Sterowanie
+Zapisz
+Pełny Ekran
+Wyłacz Grę
+Zapisane do
+błąd zapisu: 
+Wciśnij
+by
+Ελληνικά
+Português
+中文 (Chinese)
+Polski
+Deutsch
+Nederlands

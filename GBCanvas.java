@@ -1,34 +1,33 @@
 /*
- 
- MeBoy
- 
- Copyright 2005-2007 Bjorn Carlin
- http://www.arktos.se/
- 
- Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria
- University of Manchester
- 
- This program is free software; you can redistribute it and/or modify it
- under the terms of the GNU General Public License as published by the Free
- Software Foundation; either version 2 of the License, or (at your option)
- any later version.        
- 
- This program is distributed in the hope that it will be useful, but WITHOUT
- ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- more details.
- 
- 
- You should have received a copy of the GNU General Public License along with
- this program; if not, write to the Free Software Foundation, Inc., 59 Temple
- Place - Suite 330, Boston, MA 02111-1307, USA.
- 
- */
+
+MeBoy
+
+Copyright 2005-2008 Bjorn Carlin
+http://www.arktos.se/
+
+Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria
+University of Manchester
+
+This program is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation; either version 2 of the License, or (at your option)
+any later version.        
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+more details.
+
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, write to the Free Software Foundation, Inc., 59 Temple
+Place - Suite 330, Boston, MA 02111-1307, USA.
+
+*/
+
 
 import javax.microedition.lcdui.*;
-import javax.microedition.midlet.*;
 import javax.microedition.rms.*;
-import javax.microedition.lcdui.game.Sprite;
 
 
 public class GBCanvas extends Canvas implements CommandListener {
@@ -43,11 +42,19 @@ public class GBCanvas extends Canvas implements CommandListener {
 	private int previousTimeIx;
 	private boolean fullScreen;
 	
-	private Command pause = new Command("Pause", Command.SCREEN, 0);
-	private Command resume = new Command("Resume", Command.SCREEN, 0);
+	private Command pause = new Command(MeBoy.literal[34], Command.SCREEN, 0);
+	private Command resume = new Command(MeBoy.literal[35], Command.SCREEN, 0);
 	
 	private static int[] key = new int[] {KEY_NUM6, KEY_NUM4, KEY_NUM2, KEY_NUM8, KEY_NUM7, KEY_NUM9, KEY_POUND, KEY_STAR};
-	private static String[] keyName = {"right", "left", "up", "down", "a", "b", "select", "start"};
+	private String[] keyName = {
+		MeBoy.literal[36],
+		MeBoy.literal[37],
+		MeBoy.literal[38],
+		MeBoy.literal[39],
+		MeBoy.literal[40],
+		MeBoy.literal[41],
+		MeBoy.literal[42],
+		MeBoy.literal[43]};
 	private int keySetCounter;
 	private boolean settingKeys;
 	
@@ -63,15 +70,15 @@ public class GBCanvas extends Canvas implements CommandListener {
 	// Common constructor
 	private GBCanvas() {
 		addCommand(pause);
-		addCommand(new Command("Exit", Command.EXIT, 1));
+		addCommand(new Command(MeBoy.literal[9], Command.EXIT, 1));
 		if (showFps)
-			addCommand(new Command("Hide framerate", Command.SCREEN, 10));
+			addCommand(new Command(MeBoy.literal[44], Command.SCREEN, 10));
 		else
-			addCommand(new Command("Show framerate", Command.SCREEN, 10));
-		addCommand(new Command("Set buttons", Command.SCREEN, 11));
-		addCommand(new Command("Suspend", Command.SCREEN, 16));
-		addCommand(new Command("Full screen", Command.SCREEN, 17));
-		addCommand(new Command("Unload cart", Command.SCREEN, 2));
+			addCommand(new Command(MeBoy.literal[45], Command.SCREEN, 10));
+		addCommand(new Command(MeBoy.literal[46], Command.SCREEN, 11));
+		addCommand(new Command(MeBoy.literal[47], Command.SCREEN, 16));
+		addCommand(new Command(MeBoy.literal[48], Command.SCREEN, 17));
+		addCommand(new Command(MeBoy.literal[49], Command.SCREEN, 2));
 		setCommandListener(this);
 		
 		if (MeBoy.rotations != 0) {
@@ -228,42 +235,42 @@ public class GBCanvas extends Canvas implements CommandListener {
 	public void commandAction(Command c, Displayable s) {
 		try {
 			String label = c.getLabel();
-			if (label == "Exit") {
+			if (label == MeBoy.literal[9]) {
 				if (cpu.hasBattery())
 					saveCartRam();
 				parent.destroyApp(true);
 				parent.notifyDestroyed();
-			} else if (label == "Unload cart") {
+			} else if (label == MeBoy.literal[49]) {
 				if (cpu.hasBattery())
 					saveCartRam();
 				
 				parent.unloadCart();
 				Runtime.getRuntime().gc();
-			} else if (label == "Pause") {
+			} else if (label == MeBoy.literal[34]) {
 				removeCommand(pause);
 				addCommand(resume);
 				
 				cpu.terminate();
-			} else if (label == "Resume" && !settingKeys) {
+			} else if (label == MeBoy.literal[35] && !settingKeys) {
 				removeCommand(resume);
 				addCommand(pause);
 				
 				cpuThread = new Thread(cpu);
 				cpuThread.start();
-			} else if (label == "Show framerate") {
+			} else if (label == MeBoy.literal[45]) {
 				removeCommand(c);
-				addCommand(new Command("Hide framerate", Command.SCREEN, 10));
+				addCommand(new Command(MeBoy.literal[44], Command.SCREEN, 10));
 				showFps = true;
 				setDimensions();
-			} else if (label == "Hide framerate") {
+			} else if (label == MeBoy.literal[44]) {
 				removeCommand(c);
-				addCommand(new Command("Show framerate", Command.SCREEN, 10));
+				addCommand(new Command(MeBoy.literal[45], Command.SCREEN, 10));
 				showFps = false;
 				setDimensions();
-			} else if (label == "Set buttons" && !settingKeys) {
+			} else if (label == MeBoy.literal[46] && !settingKeys) {
 				settingKeys = true;
 				keySetCounter = 0;
-			} else if (label == "Suspend" && !settingKeys) {
+			} else if (label == MeBoy.literal[47] && !settingKeys) {
 				if (!cpu.isTerminated()) {
 					cpu.terminate();
 					while(cpuThread.isAlive()) {
@@ -276,7 +283,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 				} else {
 					suspend();
 				}
-			} else if (label == "Full screen" && !settingKeys) {
+			} else if (label == MeBoy.literal[48] && !settingKeys) {
 				fullScreen = !fullScreen;
 				setFullScreenMode(fullScreen);
 				
@@ -337,8 +344,8 @@ public class GBCanvas extends Canvas implements CommandListener {
 			g.setColor(0x446688);
 			g.fillRect(0, 0, w, h);
 			g.setColor(-1);
-			g.drawString("press the", w/2, h/2-18, 65);
-			g.drawString("button for", w/2, h/2, 65);
+			g.drawString(MeBoy.literal[52], w/2, h/2-18, 65);
+			g.drawString(MeBoy.literal[53], w/2, h/2, 65);
 			g.drawString(keyName[keySetCounter], w/2, h/2+18, 65);
 		} else {
 			if (g.getClipHeight() == h)
@@ -381,7 +388,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 		try {
 			RecordStore rs = RecordStore.openRecordStore("set", true);
 			
-			int bLength = 52;
+			int bLength = 53;
 			for (int i = 0; i < MeBoy.suspendIndex.length; i++)
 				bLength += 1 + MeBoy.suspendIndex[i].length();
 			bLength++;
@@ -406,6 +413,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 			
 			b[index++] = (byte) ((MeBoy.enableScaling ? 1 : 0) + (MeBoy.keepProportions ? 2 : 0) +
 				(MeBoy.fullScreen ? 4 : 0) + (MeBoy.disableColor ? 8 : 0));
+			b[index++] = (byte) MeBoy.language;
 			
 			if (rs.getNumRecords() == 0) {
 				rs.addRecord(b, 0, bLength);
@@ -453,7 +461,12 @@ public class GBCanvas extends Canvas implements CommandListener {
 						MeBoy.keepProportions = (b[index] & 2) != 0;
 						MeBoy.fullScreen = (b[index] & 4) != 0;
 						MeBoy.disableColor = (b[index] & 8) != 0;
+						MeBoy.language = (b[index] & 16) != 0 ? 1 : 0;
 						index++;
+					}
+					
+					if (b.length > index) {
+						MeBoy.language = b[index++];
 					}
 				} else
 					MeBoy.suspendIndex = new String[0];
@@ -552,9 +565,9 @@ public class GBCanvas extends Canvas implements CommandListener {
 			rs.closeRecordStore();
 			if (insertIndex)
 				MeBoy.addSuspendedGame(suspendName);
-			MeBoy.log("suspended to " + suspendName);
+			MeBoy.log(MeBoy.literal[50] + suspendName);
 		} catch (Exception e) {
-			MeBoy.log("failed suspend: " + e);
+			MeBoy.log(MeBoy.literal[51] + e);
 			if (MeBoy.debug)
 				e.printStackTrace();
 			MeBoy.showLog();

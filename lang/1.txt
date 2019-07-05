@@ -1,0 +1,60 @@
+Atras
+Acerca de MeBoy
+MeBoy 1.6 © Björn Carlin, 2005-2008.
+http://arktos.se/meboy/
+MeBoy 1.6
+Nuevo Juego
+Resumir Juego
+Configuración
+Mostrar log
+Salir
+Elegir ROM
+error de lista de cartucho: 
+Borrar
+Duplicar
+Idioma
+English
+Español
+Salto de frames
+Numero de giros de 90°
+Numero max. de bancos de 16kB a cargar
+Escalado
+Ajustar a la pantalla
+Mantener proporciones
+Iniciar maximizado
+Gameboy Color
+Desactivar GBC
+Guardar
+memoria libre: 
+error de nuevo juego: 
+error de timing: 
+error al resumir: 
+error al borrar: 
+error al duplicar: 
+error en el archivo de idioma: 
+Pausar
+Resumir
+derecha
+izquierda
+arriba
+abajo
+a
+b
+select
+start
+Ocultar FPS
+Mostrar FPS
+Definir botones
+Suspender
+Maximizar
+Cerrar ROM
+suspendido a
+error al suspender: 
+presione el
+boton para
+Ελληνικά
+Português
+中文 (Chinese)
+Polski
+Deutsch
+Nederlands
