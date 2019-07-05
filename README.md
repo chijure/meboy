@@ -14,6 +14,17 @@ Credits
 MeBoy Change Log
 -
 
+version 1.5: 10 Sept 2007
+-
+
+* Added "Scale to fit" for phones with large screens
+* Added preference for starting games in full screen mode
+* Added preference for disabling Gameboy Color support
+* Optimized drawing code, some games (like the early Pokemon games) run faster
+* Fixed bug where GBC games would show incorrect colors after resuming a suspended game
+* Fixed several minor timing bugs
+* Improed memory deallocation code, some phones should no longer get "out-of-memory" messages (Fix by Alberto Simon)
+
 version 1.4: 22 Jun 2007
 -
 

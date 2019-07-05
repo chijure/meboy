@@ -57,6 +57,8 @@ public class GBCanvas extends Canvas implements CommandListener {
 	private Image buf;
 	private Graphics bufg;
 	
+    private Thread cpuThread;
+	
 	
 	// Common constructor
 	private GBCanvas() {
@@ -76,6 +78,9 @@ public class GBCanvas extends Canvas implements CommandListener {
 			buf = Image.createImage(160, 144);
 			bufg = buf.getGraphics();
 		}
+		
+		fullScreen = MeBoy.fullScreen;
+		setFullScreenMode(fullScreen);
 	}
 	
 	// Constructor for loading suspended games
@@ -96,13 +101,14 @@ public class GBCanvas extends Canvas implements CommandListener {
 		}
 		cartName = sb.toString();
 		
-		if (isColor(cartName))
+		if (isColor(cartName) && !MeBoy.disableColor)
 			cpu = new DmgcpuColor(cartName, this, b, i+1);
 		else
 			cpu = new DmgcpuBW(cartName, this, b, i+1);
 		setDimensions();
 		
-		new Thread(cpu).start();
+		cpuThread = new Thread(cpu);
+		cpuThread.start();
 	}
 	
 	// Constructor for new games
@@ -113,7 +119,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 		
 		// MeBoy.timing = timing;
 		
-		if (isColor(cart))
+		if (isColor(cart) && !MeBoy.disableColor)
 			cpu = new DmgcpuColor(cart, this);
 		else
 			cpu = new DmgcpuBW(cart, this);
@@ -123,7 +129,8 @@ public class GBCanvas extends Canvas implements CommandListener {
 		
 		setDimensions();
 		
-		new Thread(cpu).start();
+		cpuThread = new Thread(cpu);
+		cpuThread.start();
 	}
 	
 	private boolean isColor(String cartName) {
@@ -164,6 +171,11 @@ public class GBCanvas extends Canvas implements CommandListener {
 		}
 		ssw = sw = 20 * cpu.getTileWidth();
 		ssh = sh = 18 * cpu.getTileHeight();
+		
+		if (MeBoy.rotations != 0) {
+			buf = Image.createImage(ssw, ssh);
+			bufg = buf.getGraphics();
+		}
 		
 		if (rotate) {
 			sw = ssh;
@@ -236,7 +248,8 @@ public class GBCanvas extends Canvas implements CommandListener {
 				removeCommand(resume);
 				addCommand(pause);
 				
-				new Thread(cpu).start();
+				cpuThread = new Thread(cpu);
+				cpuThread.start();
 			} else if (label == "Show framerate") {
 				removeCommand(c);
 				addCommand(new Command("Hide framerate", Command.SCREEN, 10));
@@ -252,13 +265,17 @@ public class GBCanvas extends Canvas implements CommandListener {
 				keySetCounter = 0;
 			} else if (label == "Suspend" && !settingKeys) {
 				if (!cpu.isTerminated()) {
-					removeCommand(pause);
-					addCommand(resume);
 					cpu.terminate();
-					Thread.sleep(100);
+					while(cpuThread.isAlive()) {
+						Thread.yield();
+					}
+					suspend();
+					
+					cpuThread = new Thread(cpu);
+					cpuThread.start();
+				} else {
+					suspend();
 				}
-				
-				suspend();
 			} else if (label == "Full screen" && !settingKeys) {
 				fullScreen = !fullScreen;
 				setFullScreenMode(fullScreen);
@@ -302,6 +319,9 @@ public class GBCanvas extends Canvas implements CommandListener {
 	}
 	
 	public final void paint(Graphics g) {
+		if (cpu == null)
+			return;
+		
 		if (!clear) {
 			if (showFps) {
 				paintFps(g);
@@ -384,7 +404,8 @@ public class GBCanvas extends Canvas implements CommandListener {
 					b[index++] = (byte) s.charAt(j);
 			}
 			
-			b[index++] = (byte) ((MeBoy.enableScaling ? 1 : 0) + (MeBoy.keepProportions ? 2 : 0));
+			b[index++] = (byte) ((MeBoy.enableScaling ? 1 : 0) + (MeBoy.keepProportions ? 2 : 0) +
+				(MeBoy.fullScreen ? 4 : 0) + (MeBoy.disableColor ? 8 : 0));
 			
 			if (rs.getNumRecords() == 0) {
 				rs.addRecord(b, 0, bLength);
@@ -430,6 +451,8 @@ public class GBCanvas extends Canvas implements CommandListener {
 					if (b.length > index) {
 						MeBoy.enableScaling = (b[index] & 1) != 0;
 						MeBoy.keepProportions = (b[index] & 2) != 0;
+						MeBoy.fullScreen = (b[index] & 4) != 0;
+						MeBoy.disableColor = (b[index] & 8) != 0;
 						index++;
 					}
 				} else
@@ -537,5 +560,25 @@ public class GBCanvas extends Canvas implements CommandListener {
 			MeBoy.showLog();
 		}
 	}
+	
+    public void releaseReferences() {
+		// This code helps the garbage collector on some platforms.
+		// (contributed by Alberto Simon)
+        cpu.terminate();
+        while(cpuThread.isAlive()) {
+            Thread.yield();
+        }
+        cpu.releaseReferences();
+        cpu = null;
+        
+        buf = null;
+        bufg = null;
+        cartName = null;
+        pause = null;
+        resume = null;
+        previousTime = null;
+        parent = null;
+        System.gc();
+    }
 }
 

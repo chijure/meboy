@@ -39,8 +39,10 @@ public class MeBoy extends MIDlet implements CommandListener {
 	// public static boolean timing;
 	public static int rotations = 0;
 	public static int maxFrameSkip = 3;
-	public static boolean enableScaling = true;
+	public static boolean enableScaling = false;
 	public static boolean keepProportions = false;
+	public static boolean fullScreen = false;
+	public static boolean disableColor = false;
 	public static int lazyLoadingThreshold = 64; // number of banks, each 0x4000 bytes = 16kB
 	public static int suspendCounter = 1; // next index for saved games
 	public static String[] suspendIndex = new String[0];
@@ -57,6 +59,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 	private TextField rotationField;
 	private TextField loadThresholdField;
 	private ChoiceGroup scalingGroup;
+	private ChoiceGroup gbcGroup;
 	
 	private static Form logForm = new Form("log");
 	
@@ -105,7 +108,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 	public static void showAbout() {
 		Form aboutForm = new Form("About MeBoy");
 		aboutForm.addCommand(new Command("Return", Command.BACK, 0));
-		aboutForm.append("MeBoy 1.4 © Bjšrn Carlin, 2005-2007.\n" +
+		aboutForm.append("MeBoy 1.5 \u00a9 Bj\u00f6rn Carlin, 2005-2007.\n" +
 			"http://arktos.se/meboy/");
 		
 		aboutForm.setCommandListener(instance);
@@ -114,11 +117,12 @@ public class MeBoy extends MIDlet implements CommandListener {
 	
 	public void unloadCart() {
 		mainMenuAction();
+		gbCanvas.releaseReferences();
 		gbCanvas = null;
 	}
 	
 	private void mainMenuAction() {
-		mainMenu = new List("MeBoy 1.4", List.IMPLICIT);
+		mainMenu = new List("MeBoy 1.5", List.IMPLICIT);
 		mainMenu.append("New Game", null);
 		if (suspendIndex.length > 0)
 			mainMenu.append("Resume Game", null);
@@ -201,15 +205,20 @@ public class MeBoy extends MIDlet implements CommandListener {
 				
 				frameSkipField = new TextField("Frame skip", Integer.toString(maxFrameSkip), 2, TextField.NUMERIC);
 				settingsForm.append(frameSkipField);
-				rotationField = new TextField("Number of 90 deg turns", Integer.toString(rotations), 1, TextField.NUMERIC);
+				rotationField = new TextField("Number of 90 deg turns", Integer.toString(rotations), 2, TextField.NUMERIC);
 				settingsForm.append(rotationField);
 				loadThresholdField = new TextField("Max number of 16kB banks to load", Integer.toString(lazyLoadingThreshold), 3, TextField.NUMERIC);
 				settingsForm.append(loadThresholdField);
 				
-				scalingGroup = new ChoiceGroup("Scaling", ChoiceGroup.MULTIPLE, new String[] {"Shrink to fit", "Keep proportions"}, null);
+				scalingGroup = new ChoiceGroup("Scaling", ChoiceGroup.MULTIPLE, new String[] {"Scale to fit", "Keep proportions", "Start in full screen"}, null);
 				scalingGroup.setSelectedIndex(0, enableScaling);
 				scalingGroup.setSelectedIndex(1, keepProportions);
+				scalingGroup.setSelectedIndex(2, fullScreen);
 				settingsForm.append(scalingGroup);
+				
+				gbcGroup = new ChoiceGroup("Gameboy Color", ChoiceGroup.MULTIPLE, new String[] {"Disable GBC"}, null);
+				gbcGroup.setSelectedIndex(0, disableColor);
+				settingsForm.append(gbcGroup);
 				
 				settingsForm.addCommand(new Command("Save", Command.OK, 1));
 				settingsForm.setCommandListener(this);
@@ -316,6 +325,8 @@ public class MeBoy extends MIDlet implements CommandListener {
 			lazyLoadingThreshold = Math.max(Integer.parseInt(loadThresholdField.getString()), 20);
 			enableScaling = scalingGroup.isSelected(0);
 			keepProportions = scalingGroup.isSelected(1);
+			fullScreen = scalingGroup.isSelected(2);
+			disableColor = gbcGroup.isSelected(0);
 			GBCanvas.writeSettings();
 			display.setCurrent(mainMenu);
 		}

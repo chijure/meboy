@@ -52,4 +52,6 @@ public interface ICpu extends Runnable {
 	public void rtcSkip(int s);
 	
 	public byte[] flatten();
+	
+	public void releaseReferences();
 }

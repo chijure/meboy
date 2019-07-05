@@ -101,6 +101,7 @@ public class DmgcpuBW implements ICpu {
 	public boolean interruptsEnabled = false;
 	public boolean interruptsArmed = false;
 	protected boolean p10Requested;
+	protected boolean gbcDisabled; // if true, we're running a GBC game in GB mode
 
 	
 	// 0,1 = rom bank 0
@@ -178,12 +179,12 @@ public class DmgcpuBW implements ICpu {
 		
 		interruptsEnabled = false;
 		
-		f = 0xB0;
 			a = 0x01;
 		b = 0x00;
 		c = 0x13;
 		d = 0x00;
 		e = 0xd8;
+		f = 0xB0;
 		hl = 0x014D;
 		setPC(0x0100);
 		sp = 0xFFFE;
@@ -254,10 +255,12 @@ public class DmgcpuBW implements ICpu {
 			// version 0 and 1 is original version, with interruptsEnabled encoded in version
 			interruptsEnabled = (version != 0);
 			
-		} else if (version == 2) {
+		} else if (version >= 2) {
 			// new byte for interruptsEnabled, support suspended gbc games
+				if ((version == 3) != gbcDisabled)
+					throw new RuntimeException("Incompatible saved game (GB/GBC mismatch)");
+			
 			interruptsEnabled = (flatState[offset++] != 0);
-			// gbc is ok
 		}
 		interruptsArmed = (flatState[offset++] != 0);
 		
@@ -294,7 +297,7 @@ public class DmgcpuBW implements ICpu {
 		mbc1LargeRamMode = (flatState[offset++] != 0);
 		cartRamEnabled = (flatState[offset++] != 0);
 		
-		if (version == 2) {
+		if (version >= 2) {
 			// realtime clock
 			System.arraycopy(flatState, offset, rtcReg, 0, rtcReg.length);
 			offset += rtcReg.length;
@@ -345,7 +348,7 @@ public class DmgcpuBW implements ICpu {
 		GBCanvas.setInt(flatState, offset, nextTimedInterrupt);
 		offset+=4;
 		
-		flatState[offset++] = 2; // version
+			flatState[offset++] = (byte) (gbcDisabled ? 3 : 2); // version
 		flatState[offset++] = (byte) (interruptsEnabled ? 1 : 0);
 		flatState[offset++] = (byte) (interruptsArmed ? 1 : 0);
 		
@@ -531,19 +534,6 @@ public class DmgcpuBW implements ICpu {
 		*  the relevant interrupt vector address
 		*/
 	private final void checkInterrupts() {
-		if (p10Requested) {
-			p10Requested = false;
-			if ((registers[0xff] & INT_P10) != 0) {
-				registers[0x0f] |= INT_P10;
-			}
-			
-			interruptsArmed = (registers[0xff] & registers[0x0f]) != 0;
-			if (!interruptsArmed) {
-				// button pressed, but game wasn't interested 
-				return;
-			}
-		}
-		
 		pushPC();
 		
 		int mask = registers[0xff] & registers[0x0f];
@@ -626,9 +616,14 @@ public class DmgcpuBW implements ICpu {
 				}
 			}
 			
-			nextTimedInterrupt = nextHBlank - nextTimaOverflow < 0 ? nextHBlank : nextTimaOverflow;
-			nextTimedInterrupt = nextInterruptEnable - nextTimedInterrupt < 0 ? nextInterruptEnable
-					: nextTimedInterrupt;
+			if (!interruptsArmed && p10Requested) {
+				p10Requested = false;
+				if ((registers[0xff] & INT_P10) != 0) {
+					registers[0x0f] |= INT_P10;
+				}
+
+				interruptsArmed = (registers[0xff] & registers[0x0f]) != 0;
+			}
 		} else if (instrCount - nextTimaOverflow >= 0) {
 			nextTimaOverflow += instrsPerTima * (0x100 - registers[0x06]);
 			
@@ -636,16 +631,14 @@ public class DmgcpuBW implements ICpu {
 				interruptsArmed = true;
 				registers[0x0f] |= INT_TIMA;
 			}
-			
-			nextTimedInterrupt = nextHBlank - nextTimaOverflow < 0 ? nextHBlank : nextTimaOverflow;
-			nextTimedInterrupt = nextInterruptEnable - nextTimedInterrupt < 0 ? nextInterruptEnable
-					: nextTimedInterrupt;
-		} else if (instrCount - nextInterruptEnable >= 0) {
+		}
+		
+		if (instrCount - nextInterruptEnable >= 0) {
 			interruptsEnabled = true;
 			
 			nextInterruptEnable = 0x7fffffff;
-			nextTimedInterrupt = nextHBlank - nextTimaOverflow < 0 ? nextHBlank : nextTimaOverflow;
 		}
+		nextTimedInterrupt = nextHBlank - nextTimaOverflow < 0 ? nextHBlank : nextTimaOverflow;
 	}
 	
 	public final void setPC(int pc) {
@@ -846,6 +839,87 @@ public class DmgcpuBW implements ICpu {
 		f = newf;
 	}
 	
+	private final void executeALU(int b1) {
+		int operand = registerRead(b1 & 0x07);
+		switch ((b1 & 0x38) >> 3) {
+			case 1: // ADC A, r
+				if ((f & F_CARRY) != 0) {
+					operand++;
+				}
+				// Note!  No break!
+			case 0: // ADD A, r
+				
+				if ((a & 0x0F) + (operand & 0x0F) >= 0x10) {
+					f = F_HALFCARRY;
+				} else {
+					f = 0;
+				}
+				
+				a += operand;
+				
+				if (a > 0xff) {
+					f |= F_CARRY;
+					a &= 0xff;
+				}
+				
+				if (a == 0) {
+					f |= F_ZERO;
+				}
+				break;
+			case 3: // SBC A, r
+				if ((f & F_CARRY) != 0) {
+					operand++;
+				}
+				// Note! No break!
+			case 2: // SUB A, r
+				
+				f = F_SUBTRACT;
+				
+				if ((a & 0x0F) < (operand & 0x0F)) {
+					f |= F_HALFCARRY;
+				}
+				
+				a -= operand;
+				
+				if (a < 0) {
+					f |= F_CARRY;
+					a &= 0xff;
+				}
+				if (a == 0) {
+					f |= F_ZERO;
+				}
+					
+				break;
+			case 4: // AND A, r
+				a &= operand;
+				if (a == 0) {
+					f = F_HALFCARRY + F_ZERO;
+				} else {
+					f = F_HALFCARRY;
+				}
+				break;
+			case 5: // XOR A, r
+				a ^= operand;
+				f = (a == 0) ? F_ZERO : 0;
+				break;
+			case 6: // OR A, r
+				a |= operand;
+				f = (a == 0) ? F_ZERO : 0;
+				break;
+			case 7: // CP A, r (compare)
+				f = F_SUBTRACT;
+				if (a == operand) {
+					f |= F_ZERO;
+				} else if (a < operand) {
+					f |= F_CARRY;
+				}
+				if ((a & 0x0F) < (operand & 0x0F)) {
+					f |= F_HALFCARRY;
+				}
+				break;
+		}
+	}
+	
 	public final void run() {
 		terminate = false;
 		
@@ -911,7 +985,6 @@ public class DmgcpuBW implements ICpu {
 				case 0x05: // DEC B
 					b = (b - 1) & 0xff;
 					f = (f & F_CARRY) | decflags[b];
-					
 					break;
 				case 0x06: // LD B, nn
 					localPC++;
@@ -1348,7 +1421,7 @@ public class DmgcpuBW implements ICpu {
 					
 				case 0xAF: // XOR A, A (== LD A, 0)
 					a = 0;
-					f = F_ZERO; // Set zero flag
+					f = F_ZERO;
 					break;
 				case 0xC0: // RET NZ
 					if (f < F_ZERO) {
@@ -1575,9 +1648,10 @@ public class DmgcpuBW implements ICpu {
 				case 0xE6: // AND nn
 					localPC++;
 					a &= b2;
-					f = 0;
 					if (a == 0)
 						f = F_ZERO;
+					else
+						f = 0;
 					break;
 				case 0xE7: // RST 20
 					pushPC();
@@ -1662,8 +1736,10 @@ public class DmgcpuBW implements ICpu {
 					a = addressRead(((b3 & 0xff) << 8) + b2) & 0xff;
 					break;
 				case 0xFB: // EI
-					nextInterruptEnable = instrCount + 1;
+					nextInterruptEnable = instrCount;
 					nextTimedInterrupt = nextInterruptEnable;
+					// note: since initiateInterrupts is run after checkInterrupts, this
+					// causes the correct 1 instruction delay
 					break;
 				case 0xFE: // CP nn
 					localPC++;
@@ -1681,84 +1757,7 @@ public class DmgcpuBW implements ICpu {
 					
 				default:
 					if ((b1 & 0xC0) == 0x80) { // Byte 0x10?????? indicates ALU op, i.e. 0x80 - 0xbf
-						int operand = registerRead(b1 & 0x07);
-						switch ((b1 & 0x38) >> 3) {
-							case 1: // ADC A, r
-								if ((f & F_CARRY) != 0) {
-									operand++;
-								}
-								// Note!  No break!
-							case 0: // ADD A, r
-								
-								if ((a & 0x0F) + (operand & 0x0F) >= 0x10) {
-									f = F_HALFCARRY;
-								} else {
-									f = 0;
-								}
-								
-								a += operand;
-								
-								if (a > 0xff) {
-									f |= F_CARRY;
-									a &= 0xff;
-								}
-								
-								if (a == 0) {
-									f |= F_ZERO;
-								}
-								break;
-							case 3: // SBC A, r
-								if ((f & F_CARRY) != 0) {
-									operand++;
-								}
-								// Note! No break!
-							case 2: // SUB A, r
-								
-								f = F_SUBTRACT;
-								
-								if ((a & 0x0F) < (operand & 0x0F)) {
-									f |= F_HALFCARRY;
-								}
-								
-								a -= operand;
-								
-								if (a < 0) {
-									f |= F_CARRY;
-									a &= 0xff;
-								}
-								if (a == 0) {
-									f |= F_ZERO;
-								}
-									
-								break;
-							case 4: // AND A, r
-								a &= operand;
-								if (a == 0) {
-									f = F_HALFCARRY + F_ZERO;
-								} else {
-									f = F_HALFCARRY;
-								}
-								break;
-							case 5: // XOR A, r
-								a ^= operand;
-								f = (a == 0) ? F_ZERO : 0;
-								break;
-							case 6: // OR A, r
-								a |= operand;
-								f = (a == 0) ? F_ZERO : 0;
-								break;
-							case 7: // CP A, r (compare)
-								f = F_SUBTRACT;
-								if (a == operand) {
-									f |= F_ZERO;
-								} else if (a < operand) {
-									f |= F_CARRY;
-								}
-								if ((a & 0x0F) < (operand & 0x0F)) {
-									f |= F_HALFCARRY;
-								}
-								break;
-						}
+						executeALU(b1);
 					} else {
 						MeBoy.log("Unrecognized opcode (" + Integer.toHexString(b1) + ")");
 						terminate = true;
@@ -1804,7 +1803,9 @@ public class DmgcpuBW implements ICpu {
 			} else {
 				int cyclePos = instrCount - nextHBlank + INSTRS_PER_HBLANK; // instrCount % INSTRS_PER_HBLANK;
 				
-				if (cyclePos > INSTRS_IN_MODE_0_2) {
+				if (cyclePos == INSTRS_PER_HBLANK) {
+					// mode 0
+				} else if (cyclePos > INSTRS_IN_MODE_0_2) {
 					// Mode 3
 					output |= 3;
 				} else if (cyclePos > INSTRS_IN_MODE_0) {
@@ -1816,7 +1817,7 @@ public class DmgcpuBW implements ICpu {
 			return output;
 		} else if (num == 0x04) {
 			// DIV
-			return (byte) ((instrCount - divReset) / INSTRS_PER_DIV);
+			return (byte) ((instrCount - divReset - 1) / INSTRS_PER_DIV);
 		} else if (num == 0x05) {
 			// TIMA
 			if (nextTimaOverflow == 0x7fffffff)
@@ -1844,7 +1845,7 @@ public class DmgcpuBW implements ICpu {
 				}
 				// the high nybble is unused for reading (according to gbcpuman), but Japanese Pokemon
 				// seems to require it to be set to f
-				registers[0x00] = (byte) ((0xf0) | (~output & 0x0f));
+				registers[0x00] = (byte) (0xf0 | (~output & 0x0f));
 				
 				break;
 				
@@ -2030,6 +2031,7 @@ public class DmgcpuBW implements ICpu {
 			
 			cartType = firstBank[0x0147] & 0xff;
 			int numRomBanks = lookUpCartSize(firstBank[0x0148]); // Determine the number of 16kb rom banks
+			gbcDisabled = MeBoy.disableColor && ((firstBank[0x143] & 0x80) == 0x80);
 			
 				mainRam = new byte[0x2000]; // 8 kB
 			
@@ -2188,24 +2190,24 @@ public class DmgcpuBW implements ICpu {
 			case 2:
 			case 3:
 				// MBC1
-				if (halfbank == 5) {
-					if (cartRamEnabled) {
-						memory[halfbank][subaddr] = (byte) data;
-					}
+				if (halfbank == 0) {
+					cartRamEnabled = ((data & 0x0F) == 0x0A);
 				} else if (halfbank == 1) {
 					int bankNo = data & 0x1F;
 					if (bankNo == 0)
 						bankNo = 1;
 					mapRom((currentRomBank & 0x60) | bankNo);
-				} else if (halfbank == 3) {
-					mbc1LargeRamMode = ((data & 1) == 1);
-				} else if (halfbank == 0) {
-					cartRamEnabled = ((data & 0x0F) == 0x0A);
 				} else if (halfbank == 2) {
 					if (mbc1LargeRamMode) {
 						mapRam(data & 0x03);
 					} else {
 						mapRom((currentRomBank & 0x1F) | ((data & 0x03) << 5));
+					}
+				} else if (halfbank == 3) {
+					mbc1LargeRamMode = ((data & 1) == 1);
+				} else if (halfbank == 5) {
+					if (cartRamEnabled) {
+						memory[halfbank][subaddr] = (byte) data;
 					}
 				}
 				break;
@@ -2222,8 +2224,7 @@ public class DmgcpuBW implements ICpu {
 					} else {
 						cartRamEnabled = ((data & 0x0F) == 0x0A);
 					}
-				}
-				if (halfbank == 5) {
+				} else if (halfbank == 5) {
 					if (cartRamEnabled)
 						memory[halfbank][subaddr] = (byte) data;
 				}
@@ -2251,7 +2252,7 @@ public class DmgcpuBW implements ICpu {
 					if (currentRamBank >= 8) {
 						// rtc register
 						rtcSync();
-						rtcReg[currentRamBank-8] = (byte) data;
+						rtcReg[currentRamBank - 8] = (byte) data;
 					} else {
 						// normal memory
 						memory[halfbank][subaddr] = (byte) data;
@@ -2389,13 +2390,11 @@ public class DmgcpuBW implements ICpu {
 	public void buttonDown(int buttonIndex) {
 		buttonState |= 1 << buttonIndex;
 		p10Requested = true;
-		interruptsArmed = true;
 	}
 
 	public void buttonUp(int buttonIndex) {
 		buttonState &= 0xff - (1 << buttonIndex);
 		p10Requested = true;
-		interruptsArmed = true;
 	}
 	
 	public void setScale(int screenWidth, int screenHeight) {
@@ -2437,5 +2436,24 @@ public class DmgcpuBW implements ICpu {
 	
 	public byte[][] getCartRam() {
 		return cartRam;
+	}
+	
+	public void releaseReferences() {
+		// This code helps the garbage collector on some platforms.
+		// (contributed by Alberto Simon)
+		incflags = null;
+		decflags = null;
+		rtcReg = null;
+		romBankQueue = null;
+		cartRam = null;
+		rom = null;
+		romTouch = null;
+		cartName = null;
+		graphicsChip = null;
+		mainRam = null;
+		screen = null;
+		memory = null;
+		decoderMemory = null;
+		System.gc();
 	}
 }

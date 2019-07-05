@@ -113,9 +113,8 @@ public class GraphicsChipColor {
 	
 	private boolean screenFilled;
 	
-	// scaling the screen (downscaling only)
-	private int scaleXShift = 10;
-	private int scaleYShift = 10;
+	// scaling the screen
+	private boolean scale;
 
 	int tileWidth = 8;
 	int tileHeight = 8;
@@ -153,7 +152,7 @@ public class GraphicsChipColor {
 		transparentImage = Image.createRGBImage(tempPix, tileWidth, tileHeight, true);
 		
 			for (int i = 0; i < gbcRawPalette.length; i++)
-				gbcRawPalette[i] = -1; // non-initialized
+				gbcRawPalette[i] = -1000; // non-initialized
 			for (int i = 0; i < (gbcPalette.length >> 1); i++)
 				gbcPalette[i] = -1; // white
 			for (int i = (gbcPalette.length >> 1); i < gbcPalette.length; i++)
@@ -188,7 +187,7 @@ public class GraphicsChipColor {
 			spritePriorityEnabled = (flatState[offset++] != 0);
 			setVRamBank(flatState[offset++] & 0xff);
 			for (int i = 0; i < 128; i++) {
-				setGBCPalette(i, flatState[offset++]); 
+				setGBCPalette(i, flatState[offset++] & 0xff);
 			}
 		
 		return offset;
@@ -263,7 +262,7 @@ public class GraphicsChipColor {
 				int spriteY = (0xff & cpu.oam[i * 4]) - 16;
 				int tileNum = (0xff & cpu.oam[i * 4 + 2]);
 				
-				if (spriteX >= 160 || spriteY >= 144)
+				if (spriteX >= 160 || spriteY >= 144 || spriteY == -16)
 					continue;
 				
 				if (doubledSprites) {
@@ -333,7 +332,17 @@ public class GraphicsChipColor {
 		if (!bgEnabled)
 			return;
 		
-		if ((((cpu.registers[0x42] + line) & 7) == 7) || (line == 144)) {
+		if (winEnabledThisLine && 
+				!windowStopped && 
+				(cpu.registers[0x4B] & 0xff) - 7 == 0 && // at left edge
+				(cpu.registers[0x4A] & 0xff) <= line - 7) { // starts at or above top line of this row of tiles
+			
+			// the entire row is covered by the window, so it can be safely skipped
+			int yPixelOfs = cpu.registers[0x42] & 7;
+			int screenY = (line & 0xf8) - yPixelOfs;
+			if (screenY >= 136)
+				screenFilled = true;
+		} else if ((((cpu.registers[0x42] + line) & 7) == 7) || (line == 144)) {
 			int xPixelOfs = cpu.registers[0x43] & 7;
 			int yPixelOfs = cpu.registers[0x42] & 7;
 			int xTileOfs = (cpu.registers[0x43] & 0xff) >> 3;
@@ -371,7 +380,7 @@ public class GraphicsChipColor {
 				screenX += 8;
 			}
 
-			if (screenY >= 136 + top)
+			if (screenY >= 136)
 				screenFilled = true;
 		}
 		if (line == 143 && !screenFilled) {
@@ -526,33 +535,36 @@ public class GraphicsChipColor {
 			pixixdy += tileWidth * 2;
 		}
 		
-		int ymask = (1 << scaleYShift) - 1;
-		int yhit = (1 << (scaleYShift-1));
-		int xmask = (1 << scaleXShift) - 1;
-		int xhit = (1 << (scaleXShift-1));
+		int x1c, x2c, y1c, y2c;
 		
-		for (int y = 7; y >= 0; y--) {
-			int num = weaveLookup[vram[offset++] & 0xff] + (weaveLookup[vram[offset++] & 0xff] << 1);
+		y1c = tileHeight >> 1;
+		y2c = 0;
+		for (int y = 0; y < tileHeight; y++) {
+			int num = weaveLookup[vram[offset] & 0xff] + (weaveLookup[vram[offset + 1] & 0xff] << 1);
 			if (num != 0)
 				transparent = false;
 			
-			for (int x = 7; x >= 0; x--) {
+			x1c = tileWidth >> 1;
+			x2c = 0;
+			for (int x = tileWidth; --x >= 0; ) {
 				tempPix[pixix] = palette[paletteStart + (num & 3)];
 				pixix += pixixdx;
-				num >>= 2;
 				
-				if ((x & xmask) == xhit) {
+				x2c += 8;
+				while (x2c > x1c) {
+					x1c += tileWidth;
 					num >>= 2;
-					x--;
 				}
 			}
 			pixix += pixixdy;
 			
-			if ((y & ymask) == yhit) {
+			y2c += 8;
+			while (y2c > y1c) {
+				y1c += tileHeight;
 				offset += 2;
-				y--;
 			}
 		}
+		
 		
 		if (transparent) {
 			tileImage[index] = transparentImage;
@@ -578,7 +590,12 @@ public class GraphicsChipColor {
 			return;
 		}
 		
-		g.drawImage(im, left + x - (x >> scaleXShift), top + y - (y >> scaleYShift), 20);
+		if (scale) {
+			y = (y * tileHeight) >> 3;
+			x = (x * tileWidth) >> 3;
+		}
+		
+		g.drawImage(im, left + x, top + y, 20);
 	}
 
 	/** Set the palette from the internal Gameboy format */
@@ -596,27 +613,21 @@ public class GraphicsChipColor {
 	}
 	
 	public void setScale(int screenWidth, int screenHeight) {
-		if (screenWidth < 140)
-			scaleXShift = 2;
-		else if (screenWidth < 160)
-			scaleXShift = 3;
-		else
-			scaleXShift = 10; // i.e. not at all
+		int oldTW = tileWidth;
+		int oldTH = tileHeight;
 		
-		if (screenHeight < 126)
-			scaleYShift = 2;
-		else if (screenHeight < 144)
-			scaleYShift = 3;
-		else
-			scaleYShift = 10; // i.e. not at all
+		tileWidth = screenWidth / 20;
+		tileHeight = screenHeight / 18;
 		
 		if (MeBoy.keepProportions)
-			if (scaleYShift < scaleXShift)
-				scaleXShift = scaleYShift;
+			if (tileWidth < tileHeight)
+				tileHeight = tileWidth;
 			else
-				scaleYShift = scaleXShift;
+				tileWidth = tileHeight;
 		
-		if (tileWidth != 8 - (8 >> scaleXShift) || tileHeight != 8 - (8 >> scaleYShift)) {
+		scale = tileWidth != 8 || tileHeight != 8;
+		
+		if (tileWidth != oldTW || tileHeight != oldTH) {
 			// invalidate cache
 			for (int r = 0; r < tileImage.length; r++)
 				tileImage[r] = null;
@@ -625,8 +636,6 @@ public class GraphicsChipColor {
 				tileReadState[r] = false;
 		}
 		
-		tileWidth = 8 - (8 >> scaleXShift);
-		tileHeight = 8 - (8 >> scaleYShift);
 		tempPix = new int[tileWidth * tileHeight];
 	}
 	
