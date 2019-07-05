@@ -2,7 +2,7 @@
 
 MeBoy
 
-Copyright 2005-2008 Bjorn Carlin
+Copyright 2005-2009 Bjorn Carlin
 http://www.arktos.se/
 
 Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria
@@ -32,6 +32,7 @@ import javax.microedition.lcdui.*;
 public class AdvancedGraphicsChip extends GraphicsChip {
 	protected int[] frameBuffer;
 	protected int[] scaledBuffer;
+	
 	// tiles & image cache
 	protected int[] transparentImage = new int[0];
 	protected int[][] tileImage;
@@ -39,7 +40,7 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 	
 	protected int[] tempPix;
 	
-	protected int windowSourceLine;  // only used by AdvancedGraphicsChip
+	protected int windowSourceLine;
 
 	
 	public AdvancedGraphicsChip(Dmgcpu d) {
@@ -50,9 +51,7 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 		
 		tileImage = new int[tileCount * colorCount][];
 		tileReadState = new boolean[tileCount];
-
 		tempPix = new int[8 * 8];
-		
 		frameBuffer = new int[8 * 8 * 20*18];
 	}
 	
@@ -125,21 +124,23 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 					}
 					
 					if (priorityFlag == 0x80) {
+						// background
 						if (doubledSprites) {
 							if ((spriteAttrib & TILE_FLIPY) != 0) {
-								drawPartBgSprite(tileNum + 1 - (offset >> 3), spriteX, line, offset & 7, spriteAttrib);
+								drawPartBgSprite((tileNum | 1) - (offset >> 3), spriteX, line, offset & 7, spriteAttrib);
 							} else {
-								drawPartBgSprite(tileNum + (offset >> 3), spriteX, line, offset & 7, spriteAttrib);
+								drawPartBgSprite((tileNum & -2) + (offset >> 3), spriteX, line, offset & 7, spriteAttrib);
 							}
 						} else {
 							drawPartBgSprite(tileNum, spriteX, line, offset, spriteAttrib);
 						}
 					} else {
+						// foreground
 						if (doubledSprites) {
 							if ((spriteAttrib & TILE_FLIPY) != 0) {
-								drawPartFgSprite(tileNum + 1 - (offset >> 3), spriteX, line, offset & 7, spriteAttrib);
+								drawPartFgSprite((tileNum | 1) - (offset >> 3), spriteX, line, offset & 7, spriteAttrib);
 							} else {
-								drawPartFgSprite(tileNum + (offset >> 3), spriteX, line, offset & 7, spriteAttrib);
+								drawPartFgSprite((tileNum & -2) + (offset >> 3), spriteX, line, offset & 7, spriteAttrib);
 							}
 						} else {
 							drawPartFgSprite(tileNum, spriteX, line, offset, spriteAttrib);
@@ -235,6 +236,7 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 		}
 
 		if (line == 0) {
+			awaitFrameDone();
 			windowSourceLine = 0;
 		}
 		
@@ -271,7 +273,6 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 		}
 	}
 
-	
 	protected final void updateFrameBufferImage() {
 		if (!lcdEnabled) {
 			frameBufferImage = Image.createRGBImage(new int[scaledWidth * scaledHeight],
@@ -427,7 +428,6 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 		
 		byte[] vram = otherBank ? videoRamBanks[1] : videoRamBanks[0];
 		int[] palette = cpu.gbcFeatures ? gbcPalette : gbPalette;
-		
 		boolean transparent;
 
 		if (cpu.gbcFeatures) {
@@ -490,48 +490,6 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 		tileReadState[tileIndex] = true;
 		
 		return tileImage[index];
-	}
-
-	protected final void draw(int tileIndex, int x, int y, int attribs) {
-		int ix = tileIndex + tileCount * attribs;
-		
-		int[] im = tileImage[ix];
-		
-		if (im == null) {
-			im = updateImage(tileIndex, attribs);
-		}
-		
-		int dstY = y;
-		int dstX;
-		int srcIx = 0;
-		if (im != transparentImage) {
-			for (int yc = 0; yc < 8; yc++) {
-				dstX = x;
-				for (int xc = 0; xc < 8; xc++) {
-					
-					if (dstX >= 0 && dstX < 8*20 && dstY >= 0 && dstY < 8 * 18)
-						if (im[srcIx] >> 24 == -1)
-							frameBuffer[dstX + dstY * 8*20] = im[srcIx];
-					
-					dstX++;
-					srcIx++;
-				}
-				dstY++;
-			}
-		}
-		
-		dstX = x;
-		dstY = y;
-		if (dstX >= 0 && dstX < 8*20 && dstY >= 0 && dstY < 8 * 18)
-			frameBuffer[dstX + dstY * 8*20] = 0xff00ff00;
-		dstX = x+1;
-		dstY = y;
-		if (dstX >= 0 && dstX < 8*20 && dstY >= 0 && dstY < 8 * 18)
-			frameBuffer[dstX + dstY * 8*20] = 0xff00ff00;
-		dstX = x;
-		dstY = y+1;
-		if (dstX >= 0 && dstX < 8*20 && dstY >= 0 && dstY < 8 * 18)
-			frameBuffer[dstX + dstY * 8*20] = 0xff00ff00;
 	}
 
 	// draws one scanline of the block
@@ -621,14 +579,6 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 		}
 	}
 	
-	public void setGBCPalette(int index, int data) {
-		super.setGBCPalette(index, data);
-		
-		if ((index & 0x6) == 0) {
-			gbcPalette[index >> 1] &= 0x00ffffff;
-		}
-	}
-	
 	public void setScale(int screenWidth, int screenHeight) {
 		if (MeBoy.keepProportions) {
 			if (screenWidth * 18 > screenHeight * 20)
@@ -649,6 +599,14 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 			scaledBuffer = new int[scaledWidth * scaledHeight];
 		} else {
 			scaledBuffer = null;
+		}
+	}
+	
+	public void setGBCPalette(int index, int data) {
+		super.setGBCPalette(index, data);
+		
+		if ((index & 0x6) == 0) {
+			gbcPalette[index >> 1] &= 0x00ffffff;
 		}
 	}
 }

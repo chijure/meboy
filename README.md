@@ -14,6 +14,17 @@ Credits
 MeBoy Change Log
 -
 
+version 2.1: 6 Dec 2008
+-
+
+* Fixed bug where canceling a Bluetooth transmission would not completely stop the operation, causing errors when retrying
+* Fixed graphics bug where sprites in some games (R-Type, Kirby's Dream Land 2...) were missing in regular graphics mode
+* Fixed bug that caused the real-time clock to not update
+* Fixed sound bug where the volumes of notes were not updated correctly
+* Fixed hiding of Bluetooth menu item for phones lacking JSR 82 support
+* Added new MeBoy icon, in several sizes
+* MeBoyBuilder: Added option for user to choose MeBoy icon size, or a custom icon
+
 version 2.0: 23 Nov 2008
 -
 

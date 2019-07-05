@@ -54,7 +54,7 @@ Enviar ROM-RAM
 ROM-RAM
 Enviar jogo salvo
 Jogos salvos
-Jogos recebidos
+Receber jogo salvo
 Cancelar
 Transmissão Bluetooth completa com sucesso.
 Transmissão Bluetooth falhou.

@@ -53,6 +53,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 	public static boolean showLogItem = false;
 	public static int lazyLoadingThreshold = 64; // number of banks, each 0x4000 bytes = 16kB
 	public static int language;
+	private static boolean bluetoothAvailable = false;
 	
 	public static int suspendCounter = 1; // next index for saved games
 	public static String[] suspendName10 = new String[0]; // v1-style suspended games
@@ -96,6 +97,12 @@ public class MeBoy extends MIDlet implements CommandListener {
 		if (instance == this) {
 			return;
 		}
+		
+		try {
+			bluetoothAvailable = Bluetooth.available();
+		} catch (NoClassDefFoundError t) {
+		}
+		
 		instance = this;
 		display = Display.getDisplay(this);
 
@@ -397,7 +404,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 		gbCanvas = null;
 	}
 	
-	private static String formatDetails(String details, Exception exception) {
+	private static String formatDetails(String details, Throwable exception) {
 		if (debug && exception != null) {
 			exception.printStackTrace();
 		}
@@ -413,7 +420,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 		return "";
 	}
 	
-	public static void showError(String message, String details, Exception exception) {
+	public static void showError(String message, String details, Throwable exception) {
 		if (message == null)
 			message = literal[47];
 		instance.showMessage(literal[46], message + formatDetails(details, exception));
@@ -445,13 +452,15 @@ public class MeBoy extends MIDlet implements CommandListener {
 	}
 
 	private void showMainMenu() {
-		mainMenu = new List("MeBoy 2.0", List.IMPLICIT);
+		mainMenu = new List("MeBoy 2.2", List.IMPLICIT);
 		mainMenu.append(literal[0], null);
 		if (suspendName20.length > 0) {
 			mainMenu.append(literal[1], null);
 		}
 		mainMenu.append(literal[2], null);
-		mainMenu.append(literal[4], null);
+		if (bluetoothAvailable) {
+			mainMenu.append(literal[4], null);
+		}
 		mainMenu.append(literal[5], null);
 		if (showLogItem) {
 			mainMenu.append(literal[3], null);
@@ -472,7 +481,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 		} else if (item == literal[4]) {
 			bluetooth = new Bluetooth(this);
 		} else if (item == literal[5]) {
-			showMessage(literal[5], "MeBoy 2.0 © Björn Carlin, 2005-2008.\nhttp://arktos.se/meboy/");
+			showMessage(literal[5], "MeBoy 2.2 © Björn Carlin, 2005-2009.\nhttp://arktos.se/meboy/");
 		} else if (item == literal[3]) {
 			log(literal[29] + " " + Runtime.getRuntime().freeMemory() + "/" + Runtime.getRuntime().totalMemory());
 			showLog();

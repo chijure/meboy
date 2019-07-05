@@ -37,7 +37,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 	private int sw, sh, trans; // translation, and screen size (on screen, i.e. scaled and rotated if applicable)
 	private int ssw, ssh; // source screen width and height (possibly scaled, not rotated)
 	private int clipHeight; // maybe including fps
-	private int[] previousTime = new int[8];
+	private int[] previousTime = new int[16];
 	private int previousTimeIx;
 	
 	private Command pauseCommand = new Command(MeBoy.literal[30], Command.SCREEN, 0);
@@ -272,10 +272,10 @@ public class GBCanvas extends Canvas implements CommandListener {
 		
 		int now = (int) System.currentTimeMillis();
 		// calculate moving-average fps
-		// 17 ms * 60 fps * 2*8 seconds = 16320 ms
-		int estfps = ((16320 + now - previousTime[previousTimeIx]) / (now - previousTime[previousTimeIx])) >> 1;
+		// 17 ms * 60 fps * 2*16 seconds = 16320 ms
+		int estfps = ((16320*2 + now - previousTime[previousTimeIx]) / (now - previousTime[previousTimeIx])) >> 1;
 		previousTime[previousTimeIx] = now;
-		previousTimeIx = (previousTimeIx + 1) & 0x07;
+		previousTimeIx = (previousTimeIx + 1) & 0x0F;
 		
 		g.drawString(estfps + " fps * " + (cpu.getLastSkipCount() + 1), l+1, t+sh, 20);
 	}

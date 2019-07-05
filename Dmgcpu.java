@@ -2,7 +2,7 @@
 
 MeBoy
 
-Copyright 2005-2008 Bjorn Carlin
+Copyright 2005-2009 Bjorn Carlin
 http://www.arktos.se/
 
 Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria
@@ -145,7 +145,7 @@ public class Dmgcpu implements Runnable {
 	
 	
 	// Cartridge:
-	private String cartName;
+	public String cartName;
 	
 	private int cartType;
 	
@@ -153,17 +153,15 @@ public class Dmgcpu implements Runnable {
 	// split into halfbanks of 0x2000 bytes
 	private byte[][] rom;
 	
-	private int[] romTouch;
-	
 	/** Contains the RAM on the cartridge */
 	public byte[][] cartRam;
 	
 	/** The bank number which is currently mapped at 0x4000 in CPU address space */
 	private int currentRomBank = 1;
 	int loadedRomBanks; // number of lazily loaded ROM banks, including 0
-	private int[] romBankQueue; // FIFO queue for lazily loaded ROM banks, exluding 0
+	private int[] romTouch;
 	
-	/** The RAM bank number which is currently mapped at 0xA000 in CPU address space */
+		/** The RAM bank number which is currently mapped at 0xA000 in CPU address space */
 	private int currentRamBank;
 	
 	private boolean mbc1LargeRamMode;
@@ -177,7 +175,7 @@ public class Dmgcpu implements Runnable {
 	private int[] decflags = new int[256];
 
 	private int[] soundLength = new int[3]; // in 256th of a second
-	private int[] soundVolume = new int[2]; // 0-15
+	private int[] soundVolume = new int[3]; // 0-15
 	private int[] soundFrequency = new int[3]; // midi note
 	
 	private int[] soundStartVolume = new int[2]; // 0-15
@@ -271,11 +269,7 @@ public class Dmgcpu implements Runnable {
 		
 		interruptsEnabled = false;
 		
-		if (gbcFeatures) {
-			a = 0x11;
-		} else {
-			a = 0x01;
-		}
+		a = gbcFeatures ? 0x11 : 0x01;
 		b = 0x00;
 		c = 0x13;
 		d = 0x00;
@@ -346,7 +340,7 @@ public class Dmgcpu implements Runnable {
 			decflags[i] = F_SUBTRACT + (((i & 0x0f) == 0x0f) ? F_HALFCARRY : 0);
 	}
 	
-	private void unflatten(byte[] flatState) {
+	public void unflatten(byte[] flatState) {
 		int offset = 0;
 		
 		int version = flatState[offset++];
@@ -677,10 +671,8 @@ public class Dmgcpu implements Runnable {
 	}
 	
 	private void performHdma() {
-		int dmaSrc = ((registers[0x51] & 0xff) << 8)
-				+ ((registers[0x52] & 0xff) & 0xF0);
-		int dmaDst = ((registers[0x53] & 0x1F) << 8)
-				+ (registers[0x54] & 0xF0) + 0x8000;
+		int dmaSrc = ((registers[0x51] & 0xff) << 8) + ((registers[0x52] & 0xff) & 0xF0);
+		int dmaDst = ((registers[0x53] & 0x1F) << 8) + (registers[0x54] & 0xF0) + 0x8000;
 
 		for (int r = 0; r < 16; r++) {
 			addressWrite(dmaDst + r, addressRead(dmaSrc + r));
@@ -747,8 +739,10 @@ public class Dmgcpu implements Runnable {
 					synth.shortMidiEvent(0x80 + channel, soundFrequency[channel], soundVolume[channel] * MASTER_VOLUME);
 				}
 
+				soundFrequency[channel] = n;
 				synth.shortMidiEvent(0x90 + channel, n, volume * MASTER_VOLUME);
 			}
+			soundVolume[channel] = volume;
 		} catch (Exception ex) {
 			ex.printStackTrace();
 		}
@@ -870,12 +864,12 @@ public class Dmgcpu implements Runnable {
 				
 				int line = registers[0x44] & 0xff;
 				
-				if (((registers[0x40] & 0x80) != 0) && ((registers[0xff] & INT_LCDC) != 0)) {
-					if (line < 144) {
-						if ((gbcFeatures) && (hdmaRunning)) {
-							performHdma();
-						}
+				if (line < 144) {
+					if (gbcFeatures && hdmaRunning) {
+						performHdma();
+					}
 						
+					if (((registers[0x40] & 0x80) != 0) && ((registers[0xff] & INT_LCDC) != 0)) {
 						if (((registers[0x41] & 0x08) != 0)) {
 							// trigger "mode 0 entered" interrupt
 							interruptsArmed = true;
@@ -1705,7 +1699,6 @@ public class Dmgcpu implements Runnable {
 				case 0x5e: e = addressRead(hl) & 0xff; break;
 				case 0x5f: e = a; break;
 					
-					
 					// h = r
 				case 0x60: hl = (hl & 0xFF) | (b << 8); break;
 				case 0x61: hl = (hl & 0xFF) | (c << 8); break;
@@ -2383,25 +2376,29 @@ public class Dmgcpu implements Runnable {
 				break;
 				
 			case 0x55: // FF55 - HDMA5 - GBC only
-				if (!hdmaRunning && (data & 0x80) == 0) {
-					int dmaSrc = ((registers[0x51] & 0xff) << 8) + (registers[0x52] & 0xF0);
-					int dmaDst = ((registers[0x53] & 0x1F) << 8) + (registers[0x54] & 0xF0);
-					int dmaLen = ((data & 0x7F) * 16) + 16;
-
-					for (int r = 0; r < dmaLen; r++) {
-						graphicsChip.addressWrite(dmaDst + r, (byte) addressRead(dmaSrc + r));
+				if (gbcFeatures) {
+					if (!hdmaRunning && (data & 0x80) == 0) {
+						int dmaSrc = ((registers[0x51] & 0xff) << 8) + (registers[0x52] & 0xF0);
+						int dmaDst = ((registers[0x53] & 0x1F) << 8) + (registers[0x54] & 0xF0);
+						int dmaLen = ((data & 0x7F) * 16) + 16;
+	
+						for (int r = 0; r < dmaLen; r++) {
+							graphicsChip.addressWrite(dmaDst + r, (byte) addressRead(dmaSrc + r));
+						}
+						// fixme, move instrCount?
+						
+						registers[0x55] = (byte) 0xff;
+					} else if ((data & 0x80) != 0) {
+						// start hdma
+						hdmaRunning = true;
+						registers[0x55] = (byte) (data & 0x7F);
+					} else {
+						// stop hdma
+						hdmaRunning = false;
+						registers[0x55] |= 0x80;
 					}
-					// fixme, move instrCount?
-					
-					registers[0x55] = (byte) 0xff;
-				} else if ((data & 0x80) != 0) {
-					// start hdma
-					hdmaRunning = true;
-					registers[0x55] = (byte) (data & 0x7F);
 				} else {
-					// stop hdma
-					hdmaRunning = false;
-					registers[0x55] |= 0x80;
+					registers[num] = (byte) data;
 				}
 				break;
 
@@ -2420,6 +2417,8 @@ public class Dmgcpu implements Runnable {
 						int next = ((registers[0x68] + 1) & 0x3f);
 						registers[0x68] = (byte) (next + 0x80);
 						registers[0x69] = (byte) graphicsChip.getGBCPalette(next);
+					} else {
+						registers[num] = (byte) data;
 					}
 				} else {
 					registers[num] = (byte) data;
@@ -2441,6 +2440,8 @@ public class Dmgcpu implements Runnable {
 						int next = ((registers[0x6A] + 1) & 0x3f);
 						registers[0x6A] = (byte) (next + 0x80);
 						registers[0x6B] = (byte) graphicsChip.getGBCPalette(next + 0x40);
+					} else {
+						registers[num] = (byte) data;
 					}
 				} else {
 					registers[num] = (byte) data;
@@ -2533,7 +2534,6 @@ public class Dmgcpu implements Runnable {
 					total -= is.read(rom[1], 0x2000 - total, total);
 				} while (total > 0);
 				loadedRomBanks = 1;
-				romBankQueue = new int[MeBoy.lazyLoadingThreshold];
 			}
 			is.close();
 			
@@ -2548,11 +2548,10 @@ public class Dmgcpu implements Runnable {
 							+ (numRomBanks * 16) + " kB, " + numRamBanks + " RAM banks.");
 			MeBoy.log("Type: " + cartType + (gbcFeatures ? " (color)" : " (bw)"));
 			
-			if (cartType == 6 && numRamBanks == 0)
-				numRamBanks = 1; // mbc2 has built-in ram
+			if (numRamBanks == 0)
+				numRamBanks = 1; // mbc2 has built-in ram, and anyway we want the memory mapped
 			cartRam = new byte[numRamBanks][0x2000];
-			if (numRamBanks > 0)
-				memory[5] = cartRam[0];
+			memory[5] = cartRam[0];
 			
 			lastRtcUpdate = (int) System.currentTimeMillis();
 		} catch (Exception ex) {
@@ -2598,7 +2597,6 @@ public class Dmgcpu implements Runnable {
 					newmem[0] = new byte[0x2000];
 					newmem[1] = new byte[0x2000];
 					
-					romBankQueue[loadedRomBanks] = bankNo;
 					loadedRomBanks++;
 				}
 				
@@ -2636,8 +2634,8 @@ public class Dmgcpu implements Runnable {
 	
 	private final void mapRam(int bankNo) {
 		currentRamBank = bankNo;
-		if (currentRamBank <= cartRam.length)
-			memory[5] = cartRam[bankNo];
+		if (currentRamBank < cartRam.length)
+			memory[5] = cartRam[currentRamBank];
 	}
 	
 	/** Writes to an address in CPU address space.  Writes to ROM may cause a mapping change.
@@ -2716,7 +2714,7 @@ public class Dmgcpu implements Runnable {
 				} else if (halfbank == 2) {
 					// Select RAM bank
 					if (cartRam.length > 0)
-						mapRam(data & 0x03);
+						mapRam(data & 0x0f); // only 0-3 for ram banks, 8+ for RTC
 				} else if (halfbank == 3) {
 					// fixme, rtc latch
 				} else if (halfbank == 5) {
@@ -2883,15 +2881,15 @@ public class Dmgcpu implements Runnable {
 		return graphicsChip.lastSkipCount;
 	}
 	
+	public boolean isTerminated() {
+		return terminate;
+	}
+	
 	public void terminate() {
 		terminate = true;
 		stopSound(0);
 		stopSound(1);
 		stopSound(2);
-	}
-	
-	public boolean isTerminated() {
-		return terminate;
 	}
 	
 	public byte[] getRtcReg() {
@@ -2908,7 +2906,6 @@ public class Dmgcpu implements Runnable {
 		incflags = null;
 		decflags = null;
 		rtcReg = null;
-		romBankQueue = null;
 		cartRam = null;
 		rom = null;
 		romTouch = null;

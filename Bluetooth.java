@@ -46,6 +46,9 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 
 	private Vector remoteDevices = new Vector();
 	private DiscoveryAgent discoveryAgent;
+	private boolean discoveryAgentIsInquiring;
+	private boolean discoveryAgentIsScanning;
+	private int discoveryAgentId;
 	// 0x1101 is the UUID for the Serial Port Profile
 	private UUID[] uuidSet = {new UUID(0x1101)};	// 0x0100 is the attribute for the service name element
 	// in the service record
@@ -70,6 +73,8 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 	private DataInputStream is;
 	private DataOutputStream os;
 	
+	private boolean poisoned;
+	
 	
 	public Bluetooth(MeBoy parent) {
 		this.parent = parent;
@@ -81,9 +86,14 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 	}
 
 	public void inquiryCompleted(int discType) {
+		if (poisoned) return;
+		
+		discoveryAgentIsInquiring = false;
+		
 		if (discType != INQUIRY_COMPLETED) {
-			// figure it out
+			// probably canceled
 			MeBoy.log("disctype = " + discType);
+			return;
 		}
 		if (remoteDevices.size() == 0) {
 			// the discovery process failed, so inform the user
@@ -98,6 +108,8 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 	}
 
 	public void servicesDiscovered(int transID, ServiceRecord[] servRecord) {
+		if (poisoned) return;
+		
 		for (int i = 0; i < servRecord.length; i++) {
 			DataElement serviceElement = servRecord[i].getAttributeValue(0x0001);
 			Enumeration serviceIDs = (Enumeration) (serviceElement == null ? null : serviceElement.getValue());
@@ -132,6 +144,10 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 	}
 
 	public void serviceSearchCompleted(int transID, int respCode) {
+		if (poisoned) return;
+		
+		discoveryAgentIsScanning = false;
+		
 		if (connectionURL != null && respCode == DiscoveryListener.SERVICE_SEARCH_COMPLETED) {
 			iAmSender = true;
 			new Thread(this).start();
@@ -204,6 +220,30 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 		parent.display.setCurrent(savegameList);
 	}
 	
+	private void startInquiry() throws BluetoothStateException, InterruptedException {
+		LocalDevice localDevice = LocalDevice.getLocalDevice();
+		discoveryAgent = localDevice.getDiscoveryAgent();
+		for (int i = 0; i < 10; i++) {
+			// For when there's an old inquiry still running, this will
+			// retry 10 times to start an inquiry and ignoring the
+			// state exception:
+			try {
+				discoveryAgent.startInquiry(DiscoveryAgent.GIAC, this);
+				discoveryAgentIsInquiring = true;
+				break;
+			} catch (BluetoothStateException bse) {
+				showWait(MeBoy.literal[66]);
+				Thread.sleep(500);
+			}
+		}
+		if (!discoveryAgentIsInquiring) {
+			discoveryAgent.startInquiry(DiscoveryAgent.GIAC, this);
+			discoveryAgentIsInquiring = true;
+		}
+
+		showWait(MeBoy.literal[66]);
+	}
+	
 	private void savegameSelectCommand(Command com) {
 		if (com.getCommandType() == Command.BACK) {
 			showMain();
@@ -222,10 +262,7 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 			savegameData = rs.getRecord(1);
 			rs.closeRecordStore();
 			
-			LocalDevice localDevice = LocalDevice.getLocalDevice();
-			discoveryAgent = localDevice.getDiscoveryAgent();
-			discoveryAgent.startInquiry(DiscoveryAgent.GIAC, this);
-			showWait(MeBoy.literal[66]);
+			startInquiry();
 		} catch (Exception e) {
 			parent.cancelBluetooth(e);
 			return;
@@ -266,10 +303,7 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 			if (ix > 0)
 				savegameDisplayName = savegameDisplayName.substring(ix + 2); // : and space
 			
-			LocalDevice localDevice = LocalDevice.getLocalDevice();
-			discoveryAgent = localDevice.getDiscoveryAgent();
-			discoveryAgent.startInquiry(DiscoveryAgent.GIAC, this);
-			showWait(MeBoy.literal[66]);
+			startInquiry();
 		} catch (Exception e) {
 			parent.cancelBluetooth(e);
 			return;
@@ -309,7 +343,8 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 		
 		try {
 			RemoteDevice remoteDevice = (RemoteDevice) remoteDevices.elementAt(selectedDevice);
-			discoveryAgent.searchServices(attrSet, uuidSet, remoteDevice, this);
+			discoveryAgentId = discoveryAgent.searchServices(attrSet, uuidSet, remoteDevice, this);
+			discoveryAgentIsScanning = true;
 		} catch (Exception e) {
 			parent.cancelBluetooth(e);
 			return;
@@ -341,6 +376,18 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 	}
 	
 	public void tearDown() {
+		if (poisoned) return;
+		
+		poisoned = true;
+		
+		if (discoveryAgent != null) {
+			if (discoveryAgentIsScanning)
+				discoveryAgent.cancelServiceSearch(discoveryAgentId);
+			else if (discoveryAgentIsInquiring)
+				discoveryAgent.cancelInquiry(this);
+			discoveryAgent = null;
+		}
+		
 		if (is != null) {
 			try {
 				is.close();
@@ -546,5 +593,10 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 		} catch (Exception ex) {}
 		
 		return -1;
+	}
+	
+	// Will never return false, but invocation will throw an NoClassDefFoundError if not available.
+	static boolean available() {
+		return true;
 	}
 }

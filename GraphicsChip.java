@@ -2,7 +2,7 @@
 
 MeBoy
 
-Copyright 2005-2008 Bjorn Carlin
+Copyright 2005-2009 Bjorn Carlin
 http://www.arktos.se/
 
 Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria
@@ -30,31 +30,21 @@ import javax.microedition.lcdui.*;
 
 
 public abstract class GraphicsChip {
-	protected final int MS_PER_FRAME = 17;
+	protected final int MS_PER_FRAME = 4;
 
-	/** Tile uses the background palette */
-	// protected final int TILE_BKG = 0;
-	
 	/** Tile is flipped horizontally */
 	protected final int TILE_FLIPX = 1; // 0x20 in oam attributes
 	
 	/** Tile is flipped vertically */
 	protected final int TILE_FLIPY = 2; // 0x40 in oam attributes
-	
-	/** Tile uses the first sprite palette */
-	protected final int TILE_OBJ1 = 4; // reset 0x10 in oam attributes
-	
-	/** Tile uses the second sprite palette */
-	protected final int TILE_OBJ2 = 8; // set 0x10 in oam attributes
 
 	/** The current contents of the video memory, mapped in at 0x8000 - 0x9FFF */
 	protected byte[] videoRam;
 	
 	protected byte[][] videoRamBanks; // one for gb, two for gbc
 	
-	
 	/** RGB color values */
-	protected int[] colors;  // gb color palette
+	protected int[] colors; // gb color palette
 	protected int[] gbPalette = new int[12];
 	protected int[] gbcRawPalette = new int[128];
 	protected int[] gbcPalette = new int[64];
@@ -66,10 +56,10 @@ public abstract class GraphicsChip {
 	boolean lcdEnabled = true;
 	boolean spritePriorityEnabled = true;
 	
-	
 	// skipping, timing:
 	public int timer;
 	protected boolean skipping = true; // until graphics is set
+	protected int frameCount;
 	protected int skipCount;
 	
 	// some statistics
@@ -87,12 +77,16 @@ public abstract class GraphicsChip {
 	protected int tileOffset; // 384 when in vram bank 1 in gbc mode
 	protected int tileCount; // 384 for gb, 384*2 for gbc
 	protected int colorCount; // number of "logical" colors = palette indices, 12 for gb, 64 for gbc
-	protected Dmgcpu cpu;
 	
-	public Image frameBufferImage;
 	protected boolean scale;
 	public int scaledWidth = 160;
 	public int scaledHeight = 144;
+	
+	private boolean frameDone = true; // ugly framebuffer "mutex"
+	
+	protected Dmgcpu cpu;
+	
+	public Image frameBufferImage;
 	
 	// lookup table for fast image decoding
 	protected static int[] weaveLookup = new int[256];
@@ -227,20 +221,10 @@ public abstract class GraphicsChip {
 		}
 	}
 	
-	/** Writes data to the specified video RAM address */
-	public abstract void addressWrite(int addr, byte data);
-	
-	/** Invalidate all tiles in the tile cache for the given palette */
-	public abstract void invalidateAll(int pal);
-
-	/** This must be called by the CPU for each scanline drawn by the display hardware.
-	 */
-	public abstract void notifyScanline(int line);
-	
 	public final void vBlank() {
-		// if (MeBoy.timing) return;
-		
 		timer += MS_PER_FRAME;
+		
+		frameCount++;
 		
 		if (skipping) {
 			skipCount++;
@@ -278,10 +262,6 @@ public abstract class GraphicsChip {
 		
 		skipCount = 0;
 	}
-	
-	public void repaint() {
-		cpu.screen.redrawSmall();
-	}
 
 	/** Set the palette from the internal Gameboy format */
 	public void decodePalette(int startIndex, int data) {
@@ -289,8 +269,6 @@ public abstract class GraphicsChip {
 			gbPalette[startIndex + i] = colors[((data >> (2 * i)) & 0x03)];
 		gbPalette[startIndex] &= 0x00ffffff; // color 0: transparent
 	}
-	
-	public abstract void setScale(int screenWidth, int screenHeight);
 	
 	public void setGBCPalette(int index, int data) {
 		if (gbcRawPalette[index] == data)
@@ -318,7 +296,34 @@ public abstract class GraphicsChip {
 		videoRam = videoRamBanks[value];
 		cpu.memory[4] = videoRam;
 	}
+	
+	public final void repaint() {
+		frameDone = false;
+		cpu.screen.redrawSmall();
+	}
+	
+	protected final void awaitFrameDone() {
+		while (!frameDone && !cpu.terminate) {
+			Thread.yield();
+		}
+	}
 
+	public final void notifyRepainted() {
+		frameDone = true;
+	}
+	
 	public void stopWindowFromLine() {}
-	public void notifyRepainted() {}
+	
+	public abstract void setScale(int screenWidth, int screenHeight);
+	
+	/** Writes data to the specified video RAM address */
+	public abstract void addressWrite(int addr, byte data);
+	
+	/** Invalidate all tiles in the tile cache for the given palette */
+	public abstract void invalidateAll(int pal);
+
+	/** This must be called by the CPU for each scanline drawn by the display hardware.
+	 */
+	public abstract void notifyScanline(int line);
+	
 }

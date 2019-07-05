@@ -69,6 +69,7 @@ public class Bluetooth implements Runnable, DiscoveryListener, WindowListener, A
 	private byte[] sendBuffer;
 	private String sendFilename;
 
+	private int threadCounter;
 	private Thread receiverThread;
 	private DiscoveryAgent discoveryAgent;
 	private boolean discoveryAgentIsInquiring;
@@ -116,21 +117,24 @@ public class Bluetooth implements Runnable, DiscoveryListener, WindowListener, A
 		MeBoyBuilder.bluetoothInstance = this;
 		
 		new Thread(this).start();
-
-		try {
-			LocalDevice localDevice = LocalDevice.getLocalDevice();
-			discoveryAgent = localDevice.getDiscoveryAgent();
-			discoveryAgent.startInquiry(DiscoveryAgent.GIAC, this);
-			discoveryAgentIsInquiring = true;
-		} catch (Exception e) {
-			MeBoyBuilder.nonFatalException(e, "MeBoyBuilder failed scanning for Bluetooth devices.");
-			sendProgress.setIndeterminate(false);
-			sendProgressLabel.setText("Failed scanning for Bluetooth devices.");
-		}
 	}
 
 	public void run() {
-		if (receiverThread == null) {
+		threadCounter++;
+		if (threadCounter == 1) {
+			new Thread(this).start();
+			
+			try {
+				LocalDevice localDevice = LocalDevice.getLocalDevice();
+				discoveryAgent = localDevice.getDiscoveryAgent();
+				discoveryAgent.startInquiry(DiscoveryAgent.GIAC, this);
+				discoveryAgentIsInquiring = true;
+			} catch (Exception e) {
+				MeBoyBuilder.nonFatalException(e, "MeBoyBuilder failed scanning for Bluetooth devices.");
+				sendProgress.setIndeterminate(false);
+				sendProgressLabel.setText("Failed scanning for Bluetooth devices.");
+			}
+		} else if (threadCounter == 2) {
 			receiverThread = Thread.currentThread();
 			receiveMainloop();
 		} else {

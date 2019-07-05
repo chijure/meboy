@@ -2,17 +2,31 @@ l
 Česky
 g
 Deutsch
+c
+Ελληνικά
 a
 English
 b
 Español
 j
 Français
+n
+Hrvatski
 i
 Indonesian
+k
+Italiano
 h
 Nederlands
 d
 Português (Br)
 f
 Polski
+m
+Русский
+o
+Srpski
+e
+中文 (Chinese)
+p
+Українська
