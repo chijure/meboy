@@ -1,60 +1,72 @@
-Terug
-Over MeBoy
-MeBoy 1.6 © Björn Carlin, 2005-2008.
-http://arktos.se/meboy/
-MeBoy 1.6
-Nieuw spel
-Spel hervatten
+Nieuw Spel
+Spel Hervatten
 Instellingen
-Logboek openen
-Einde
+Logboek tonen
+Bluetooth
+Over MeBoy
+Afsluiten
 Selecteer Spel
-spellijst fout: 
 Verwijderen
-Verdubbelen
-Taal
-English
-Español
+Kopiëren
+Terug
+Kan niet hervatten omdat het spel niet geïnstalleerd is
 Frames overslaan
-Aantal draaiingen van 90°
-Max aantal van 16kB banken om te laden
-Beeldinstellingen
+Keren scherm draaien (x90°)
+Grafische weergave
 Op het scherm laten passen
 In verhoudingen houden
-Start in volledig scherm
-Gameboy Color
-GBC uitschakelen
+Geavanceerde grafische weergave
+Geavanceerde schalings modus
+Geluid
+Geluid aanzetten
+Experimentele functies
+Taal
+Anders
+GBC emulatie uitschakelen
+Laat logboek zien in menu
+Max grootte geladen spel in kB
 Opslaan
-vrij geheugen: 
-nieuwspel fout: 
-timing fout: 
-hervattings fout: 
-verwijderings fout: 
-verdubbelings fout: 
-taalbestand fout: 
+Logboek
+Vrij geheugen:
 Pauze
 Hervatten
+Opslaan
+Weergeven/verbergen framerate
+Volledig scherm
+Besturing instellen
+Afsluiten
+Druk op de knop voor
 rechts
 links
 omhoog
 omlaag
-a
-b
-select
-start
-Framerate verbergen
-Framerate laten zien
-Besturing instellen
-Opslaan
-Volledig scherm
-Spel stoppen
-opgeslagen naar
-opslaan mislukt: 
-druk op de
-knop voor
-Ελληνικά
-Português
-中文 (Chinese)
-Polski
-Deutsch
-Nederlands
+A
+B
+Select
+Start
+Meboy Fout
+Er heeft een fout plaatsgevonden
+Ongeschikt opgeslagen spel.
+Laden van het spel mislukt
+Updaten opgeslagen spel mislukt
+Kan de lijst met spellen niet laden.
+Verstuur spel
+Spellen
+Verstuur opgeslagen spel
+Opgeslagen spellen
+Opgeslagen spel ontvangen
+Annuleren
+Bluetooth overdracht voltooid.
+Bluetooth overdracht mislukt.
+Geen Bluetooth apparaten gevonden.
+Versturen...
+Kan geen verbinding maken met MeBoy op het apparaat.
+Het opgeslagen spel kon niet ontvangen worden, omdat het bijbehorende spel niet geïnstalleerd is.
+Het ontvangen opgeslagen spel kon niet opgeslagen worden.
+Geen van de geïnstalleerde spellen heeft kaart-RAM.
+Zoekend naar naarbije apparaten. Ontvangend apparaat moet in "ontvang opgeslagen spel" modus staan.
+Probeert verbinding te maken met Meboy op het geselecteerde apparaat...
+Wachten op het opgeslagen spel om verstuurd te worden...
+Ongeschikte versie.
+Selecteer apparaat
+Ontvangen...

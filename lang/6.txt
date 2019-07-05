@@ -1,60 +1,73 @@
-Zurück
-Über MeBoy
-MeBoy 1.6 © Björn Carlin, 2005-2008.
-http://arktos.se/meboy/
-MeBoy 1.6
-Neues Spiel
+Spiel starten
 Spiel fortsetzen
-Einstellungen
-Log zeigen
+Optionen
+Log anzeigen
+Bluetooth
+Über MeBoy
 Beenden
 Spiel wählen
-cartlist fehler: 
 Löschen
 Duplizieren
-Sprache
-English
-Español
-Zu überspringende Frames
-Bildrotation (x90°)
-Anzahl 16kb "banks" (Max)
-Skalierung
-Skaliere, wenn unpassend
+Zurück
+Spielstand kann nicht fortgesetzt werden, weil dass zugehörige Spiel nicht installiert ist
+Frames überspringen
+Bildschirm rotieren (x90°)
+Grafikeinstellungen
+Auf passende Größe skalieren
 Proportionen beibehalten
-Mit Vollbild starten
-Gameboy Color
-GBC ausschlaten
+Erweiterter Zeichenmodus (langsamer)
+Erweiterter Skalierungsmodus
+Sound
+Sound aktivieren
+Experimentelle Features
+Sprache
+Anderes
+GBC Emulation deaktivieren
+"Log" im Menü anzeigen
+Maximal geladene Cartgröße (kB)
 Speichern
-freier Speicher: 
-newgame fehler: 
-timing fehler: 
-resumption fehler: 
-deletion fehler: 
-duplication fehler: 
-langfile fehler: 
+Log
+Freier Speicher:
 Pause
 Fortsetzen
-rechts
-links
-hoch
-runter
-a
-b
-select
-start
-Framerate ausblenden
-Framerate einblenden
-Tasten bearbeiten
-Unterbrechen
-Vollbild
 Auswerfen
-unterbrochen zu
-Unterbrechen fehlgeschlagen: 
-drücke die
-Taste für
-Ελληνικά
-Português
-中文 (Chinese)
-Polski
-Deutsch
-Nederlands
+Framerate ein/ausblenden
+Vollbild
+Tasten bearbeiten
+Beenden von
+Drücke die Taste für
+Rechts
+Links
+Hoch
+Runter
+A
+B
+Select
+Start
+MeBoy Fehler
+Ein Fehler ist aufgetreten
+Imkompatibler Speicherstand.
+Laden des Spielstandes fehlgeschlagen
+Spielstand konnte nicht gespeichert werden
+Liste der Carts konnte nicht geladen werden
+Sende cart-RAM
+Cart-RAM
+Sende gespeichertes Spiel
+Spielstände
+Empfange Spielstand
+Abbrechen
+Bluetoothübertragung erfolgreich abgeschlossen.
+Bluetoothübertragung fehlgeschlagen
+Keine Bluetoothdevices gefunden
+Übertrage...
+Verbindungsfehler mit MeBoy auf Zielgerät.
+Der Spielstand konnte nicht empfangen werden, weil er zu keinem installiertem Spiel passt.
+Der empfangene Spielstand konnte nicht gespeichert werden.
+Keines der installierten Spiele besitzt cart-RAM.
+Suche nach Geräten in der Umgebung... Stellen sie sicher, dass sich das Zielgerät im "Spielstand empfangen"-Modus befindet.
+Versuche zu MeBoy auf dem Zielgerät zu verbinden...
+Warten auf Übertragung des Spielstandes...
+Inkompatible Version.
+Gerät auswählen
+Empfange...
+

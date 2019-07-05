@@ -6,26 +6,28 @@ Copyright 2005-2008 Bjorn Carlin
 http://www.arktos.se/
 
 Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria
-University of Manchester
+University of Manchester. Bluetooth support based on code contributed by
+Martin Neumann.
 
 This program is free software; you can redistribute it and/or modify it
 under the terms of the GNU General Public License as published by the Free
 Software Foundation; either version 2 of the License, or (at your option)
-any later version.        
+any later version.
 
 This program is distributed in the hope that it will be useful, but WITHOUT
 ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
 more details.
 
 
 You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc., 59 Temple
 Place - Suite 330, Boston, MA 02111-1307, USA.
- 
+
 */
 
-import javax.microedition.lcdui.*;
+import javax.microedition.media.*;
+import javax.microedition.media.control.*;
 
 /** This is the main controlling class for the emulation
 *  It contains the code to emulate the Z80-like processor
@@ -33,7 +35,7 @@ import javax.microedition.lcdui.*;
 *  in CPU address space that points to the correct area of
 *  ROM/RAM/IO.
 */
-public class Dmgcpu implements ICpu {
+public class Dmgcpu implements Runnable {
 	// Constants for flags register
 	
 	/** Zero flag */
@@ -44,22 +46,23 @@ public class Dmgcpu implements ICpu {
 	private final int F_HALFCARRY = 0x20;
 	/** Carry flag */
 	private final int F_CARRY = 0x10;
+
+	// same in single and double speed:
+	protected final int INSTRS_PER_DIV = 64;
+	
+	// single speed values:
+	protected final int BASE_INSTRS_IN_MODE_0 = 51;
+	protected final int BASE_INSTRS_IN_MODE_2 = 20;
+	protected final int BASE_INSTRS_IN_MODE_3 = 43;
 	
 	/** Used to set the speed of the emulator.  This controls how
-		*  many instructions are executed for each horizontal line scanned
-		*  on the screen.  Multiply by 154 to find out how many instructions
-		*  per frame.
-		*/
-	protected int INSTRS_PER_HBLANK = 60; /* around 8 cycles per instruction, which is an average for several games... */
-	protected int INSTRS_IN_MODE_0 = 30; // instructions in mode 0
-	protected int INSTRS_IN_MODE_0_2 = 40; // sum of instructions in mode 0 and 2
-	protected int INSTRS_PER_DIV = 33;
-
-	// single speed values:
-	protected final int BASE_INSTRS_PER_HBLANK = 60;
-	protected final int BASE_INSTRS_IN_MODE_0 = 30;
-	protected final int BASE_INSTRS_IN_MODE_0_2 = 40;
-	protected final int BASE_INSTRS_PER_DIV = 33;
+	 *  many instructions are executed for each horizontal line scanned
+	 *  on the screen.  Multiply by 154 to find out how many instructions
+	 *  per frame.
+	 */
+	protected int INSTRS_IN_MODE_0 = BASE_INSTRS_IN_MODE_0;
+	protected int INSTRS_IN_MODE_2 = BASE_INSTRS_IN_MODE_2;
+	protected int INSTRS_IN_MODE_3 = BASE_INSTRS_IN_MODE_3;
 	
 	// Constants for interrupts
 	
@@ -92,24 +95,21 @@ public class Dmgcpu implements ICpu {
 	
 	/** The number of instructions that have been executed since the last reset */
 	private int instrCount;
+
+	private int graphicsChipMode; // takes values 0,2,3 -- mode 1 is signaled by line>=144
 	
-	private int nextHBlank;
+	private int nextModeTime;
 	private int nextTimaOverflow;
-	private int nextInterruptEnable;
 	private int nextTimedInterrupt;
 	
 	public boolean interruptsEnabled = false;
 	public boolean interruptsArmed = false;
-	public boolean timaEnabled = false;
-	public boolean interruptEnableEnabled = false;
+	private boolean timaActive;
+	private boolean interruptEnableRequested;
 	protected boolean p10Requested;
-	//#if +gbc
-	protected boolean gbcFeatures; //#if +gbc
+	protected boolean gbcFeatures;
 	protected int gbcRamBank;
 	protected boolean hdmaRunning;
-	//#if -gbc
-	protected boolean gbcDisabled; // if true, we're running a GBC game in GB mode
-	//#if
 
 	
 	// 0,1 = rom bank 0
@@ -133,7 +133,7 @@ public class Dmgcpu implements ICpu {
 	/** instrCount at the time register[4] was reset */
 	private int divReset;
 
-	private int instrsPerTima = 131;
+	private int instrsPerTima = 256;
 	
 	/** Current state of the buttons, bit set = pressed. */
 	private int buttonState;
@@ -152,6 +152,8 @@ public class Dmgcpu implements ICpu {
 	/** Contains the complete ROM image of the cartridge */
 	// split into halfbanks of 0x2000 bytes
 	private byte[][] rom;
+	
+	private int[] romTouch;
 	
 	/** Contains the RAM on the cartridge */
 	public byte[][] cartRam;
@@ -173,25 +175,107 @@ public class Dmgcpu implements ICpu {
 	
 	private int[] incflags = new int[256];
 	private int[] decflags = new int[256];
+
+	private int[] soundLength = new int[3]; // in 256th of a second
+	private int[] soundVolume = new int[2]; // 0-15
+	private int[] soundFrequency = new int[3]; // midi note
 	
+	private int[] soundStartVolume = new int[2]; // 0-15
+	private int[] soundVolumeDelta = new int[2]; // -1-1
+	private int[] soundVolumeDeltaPeriod = new int[2];
+	private int[] soundVolumeDeltaStep = new int[2];
+	
+	private final int MASTER_VOLUME = 8;
+	
+	private Player player;
+	private MIDIControl synth;
+
+	
+	static int[] midiLookup;
+	static {
+		midiLookup = new int[2048];
+		int[] cutoff = {100, 210, 313, 410, 502, 589, 671, 748, 821, 890, 955,
+				1016, 1074, 1129, 1181, 1229, 1275, 1319, 1360, 1398, 1435, 1469,
+				1502, 1532, 1561, 1589, 1615, 1639, 1662, 1684, 1704, 1723, 1742,
+				1759, 1775, 1790, 1805, 1819, 1832, 1844, 1855, 1866, 1876, 1886,
+				1895, 1904, 1912, 1919, 1927, 1934, 1940, 1946, 1952, 1957, 1962,
+				1967, 1972, 1976, 1980, 1984, 1988, 1991, 1994, 1997, 2000, 2003,
+				2005, 2008, 2010, 2012, 2014, 2016, 2018, 2020, 2021, 2023, 2024,
+				2026, 2027, 2028, 2029, 2048};
+		int ix = 0;
+		for (int i = 0; i < 2048; i++) {
+			if (i == cutoff[ix]) {
+				ix++;
+			}
+			midiLookup[i] = 36+ix;
+		}
+	}
+	
+	private static final int cyclesPerInstr[] = {
+		1, 3, 2, 2, 1, 1, 2, 1,  5, 2, 2, 2, 1, 1, 2, 1,
+		1, 3, 2, 2, 1, 1, 2, 1,  3, 2, 2, 2, 1, 1, 2, 1,
+		3, 3, 2, 2, 1, 1, 2, 1,  3, 2, 2, 2, 1, 1, 2, 1,
+		3, 3, 2, 2, 3, 3, 3, 1,  3, 2, 2, 2, 1, 1, 2, 1,
+		
+		1, 1, 1, 1, 1, 1, 2, 1,  1, 1, 1, 1, 1, 1, 2, 1,
+		1, 1, 1, 1, 1, 1, 2, 1,  1, 1, 1, 1, 1, 1, 2, 1,
+		1, 1, 1, 1, 1, 1, 2, 1,  1, 1, 1, 1, 1, 1, 2, 1,
+		2, 2, 2, 2, 2, 2, 1, 2,  1, 1, 1, 1, 1, 1, 2, 1,
+		
+		1, 1, 1, 1, 1, 1, 2, 1,  1, 1, 1, 1, 1, 1, 2, 1,
+		1, 1, 1, 1, 1, 1, 2, 1,  1, 1, 1, 1, 1, 1, 2, 1,
+		1, 1, 1, 1, 1, 1, 2, 1,  1, 1, 1, 1, 1, 1, 2, 1,
+		1, 1, 1, 1, 1, 1, 2, 1,  1, 1, 1, 1, 1, 1, 2, 1,
+		
+		5, 3, 4, 4, 6, 4, 2, 4,  5, 4, 4, 0, 6, 6, 2, 4,
+		5, 3, 4, 0, 6, 4, 2, 4,  5, 4, 4, 0, 6, 0, 2, 4,
+		3, 3, 2, 0, 0, 4, 2, 4,  4, 1, 4, 0, 0, 0, 2, 4,
+		3, 3, 2, 1, 0, 4, 2, 4,  3, 2, 4, 1, 0, 0, 2, 4,
+	};
+	
+	
+	private static int cyclesPerInstrShift[] = {
+		2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2,
+		2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2,
+		2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2,
+		2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2,
+		
+		2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2,
+		2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2,
+		2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2,
+		2, 2, 2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2, 3, 2,
+		
+		2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2,
+		2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2,
+		2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2,
+		2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2,
+		
+		2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2,
+		2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2,
+		2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2,
+		2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 4, 2,
+	};
 	
 	public Dmgcpu(String cart, GBCanvas gbc) {
 		cartName = cart;
 		initCartridge();
 		screen = gbc;
 		
-		graphicsChip = new GraphicsChip(this);
+		if (MeBoy.advancedGraphics)
+			graphicsChip = new AdvancedGraphicsChip(this);
+		else
+			graphicsChip = new SimpleGraphicsChip(this);
 		
 		memory[6] = mainRam;
 		memory[7] = mainRam;
 		
 		interruptsEnabled = false;
 		
-		if (gbcFeatures) { //#if +gbc
+		if (gbcFeatures) {
 			a = 0x11;
-		} else { //#if -gbc
+		} else {
 			a = 0x01;
-		} //#if
+		}
 		b = 0x00;
 		c = 0x13;
 		d = 0x00;
@@ -200,32 +284,56 @@ public class Dmgcpu implements ICpu {
 		hl = 0x014D;
 		setPC(0x0100);
 		sp = 0xFFFE;
-		
-		nextHBlank = INSTRS_PER_HBLANK;
-		nextTimaOverflow = 0x7fffffff;
-		timaEnabled = false;
-		nextInterruptEnable = 0x7fffffff;
-		interruptEnableEnabled = false;
-		nextTimedInterrupt = INSTRS_PER_HBLANK;
+
+		graphicsChipMode = 0;
+		nextModeTime = 0;
+		timaActive = false;
+		interruptEnableRequested = false;
+		nextTimedInterrupt = 0;
 		
 		initIncDecFlags();
 
 		ioHandlerReset();
+		
+		if (MeBoy.enableSound)
+			initSound();
 	}
 	
-	public Dmgcpu(String cart, GBCanvas gbc, byte[] flatState, int offset) {
+	public Dmgcpu(String cart, GBCanvas gbc, byte[] flatState) {
 		cartName = cart;
 		initCartridge();
 		screen = gbc;
 		
-		graphicsChip = new GraphicsChip(this);
+		if (MeBoy.advancedGraphics)
+			graphicsChip = new AdvancedGraphicsChip(this);
+		else
+			graphicsChip = new SimpleGraphicsChip(this);
 		
 		memory[6] = mainRam;
 		memory[7] = mainRam;
 		
-		unflatten(flatState, offset);
+		unflatten(flatState);
 		
 		initIncDecFlags();
+		
+		if (MeBoy.enableSound)
+			initSound();
+	}
+	
+	private void initSound() {
+		try {
+			player = Manager.createPlayer(Manager.MIDI_DEVICE_LOCATOR);
+			player.realize();
+			player.start();
+			synth = (MIDIControl) player.getControl("MIDIControl");
+			if (MeBoy.advancedSound) {
+				synth.shortMidiEvent(0xC0, 81, 0);
+				synth.shortMidiEvent(0xC1, 81, 0);
+				synth.shortMidiEvent(0xC2, 81, 0);
+			}
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}
 	}
 	
 	private void initIncDecFlags() {
@@ -238,7 +346,14 @@ public class Dmgcpu implements ICpu {
 			decflags[i] = F_SUBTRACT + (((i & 0x0f) == 0x0f) ? F_HALFCARRY : 0);
 	}
 	
-	private void unflatten(byte[] flatState, int offset) {
+	private void unflatten(byte[] flatState) {
+		int offset = 0;
+		
+		int version = flatState[offset++];
+		boolean flatGbcFeatures = flatState[offset++] != 0;
+		if (version != 1 || flatGbcFeatures != gbcFeatures)
+			throw new RuntimeException(MeBoy.literal[48]);
+		
 		a = flatState[offset++] & 0xff;
 		b = flatState[offset++] & 0xff;
 		c = flatState[offset++] & 0xff;
@@ -251,47 +366,27 @@ public class Dmgcpu implements ICpu {
 		hl = (hl << 8) + (flatState[offset++] & 0xff);
 		int pc = flatState[offset++] & 0xff;
 		pc = (pc << 8) + (flatState[offset++] & 0xff);
+		// setPC() will be called below to set the fields.
 		
 		instrCount = GBCanvas.getInt(flatState, offset);
 		offset += 4;
-		nextHBlank = GBCanvas.getInt(flatState, offset);
+		nextModeTime = GBCanvas.getInt(flatState, offset);
 		offset += 4;
 		nextTimaOverflow = GBCanvas.getInt(flatState, offset);
-		timaEnabled = nextTimaOverflow == 0x7fffffff; // not great, but backwards-compatible
-		offset += 4;
-		nextInterruptEnable = GBCanvas.getInt(flatState, offset);
-		interruptEnableEnabled = nextInterruptEnable == 0x7fffffff; // not great, but backwards-compatible
 		offset += 4;
 		nextTimedInterrupt = GBCanvas.getInt(flatState, offset);
 		offset += 4;
 		
-		int version = flatState[offset++] & 0xff;
-		
-		if (version <= 1) {
-			// version 0 and 1 is original version, with interruptsEnabled encoded in version
-			interruptsEnabled = (version != 0);
-			
-			if (gbcFeatures) { //#if +gbc
-				throw new RuntimeException("Incompatible saved game (GB/GBC mismatch)");
-			} //#if
-		} else if (version >= 2) {
-			// new byte for interruptsEnabled, support suspended gbc games
-			if (!gbcFeatures) { //#if +gbc
-				if (version == 3)
-					throw new RuntimeException("Incompatible saved game (GB/GBC mismatch)");
-			} else { //#if -gbc
-				if ((version == 3) != gbcDisabled)
-					throw new RuntimeException("Incompatible saved game (GB/GBC mismatch)");
-			} //#if
-			
-			interruptsEnabled = (flatState[offset++] != 0);
-		}
-		interruptsArmed = (flatState[offset++] != 0);
+		timaActive = flatState[offset++] != 0;
+		graphicsChipMode = flatState[offset++];
+		interruptsEnabled = flatState[offset++] != 0;
+		interruptsArmed = flatState[offset++] != 0;
+		interruptEnableRequested = flatState[offset++] != 0;
 		
 		System.arraycopy(flatState, offset, mainRam, 0, mainRam.length);
 		offset += mainRam.length;
-		System.arraycopy(flatState, offset, oam, 0, 0x0100);
-		offset += 0x0100;
+		System.arraycopy(flatState, offset, oam, 0, 0x00A0);
+		offset += 0x00A0;
 		System.arraycopy(flatState, offset, registers, 0, 0x0100);
 		offset += 0x0100;
 
@@ -301,9 +396,6 @@ public class Dmgcpu implements ICpu {
 		offset += 4;
 		
 		// cartridge
-		cartType = GBCanvas.getInt(flatState, offset);
-		offset += 4;
-		
 		for (int i = 0; i < cartRam.length; i++) {
 			System.arraycopy(flatState, offset, cartRam[i], 0, 0x2000);
 			offset += 0x2000;
@@ -321,38 +413,44 @@ public class Dmgcpu implements ICpu {
 		mbc1LargeRamMode = (flatState[offset++] != 0);
 		cartRamEnabled = (flatState[offset++] != 0);
 		
-		if (version >= 2) {
-			// realtime clock
-			System.arraycopy(flatState, offset, rtcReg, 0, rtcReg.length);
-			offset += rtcReg.length;
-		}
+		// realtime clock
+		System.arraycopy(flatState, offset, rtcReg, 0, rtcReg.length);
+		offset += rtcReg.length;
 		
 		offset = graphicsChip.unflatten(flatState, offset);
 		
-		if (gbcFeatures) { //#if +gbc
+		if (gbcFeatures) {
 			gbcRamBank = flatState[offset++] & 0xff;
 			hdmaRunning = flatState[offset++] != 0;
-		} //#if
+			
+			if ((registers[0x4D] & 0x80) != 0) {
+				// double speed
+				INSTRS_IN_MODE_0 = BASE_INSTRS_IN_MODE_0;
+				INSTRS_IN_MODE_2 = BASE_INSTRS_IN_MODE_2;
+				INSTRS_IN_MODE_3 = BASE_INSTRS_IN_MODE_3;
+			} else {
+				// instrs_in_mode are set correctly already
+			}
+		}
 
 		setPC(pc);
 		
 		if (offset != flatState.length)
-			throw new RuntimeException("unflatten offset error:" + offset + ", " + flatState.length);
+			throw new RuntimeException(MeBoy.literal[49] + ": " + offset + ", " + flatState.length);
 	}
 	
 	public byte[] flatten() {
-		int size = cartName.length() + 1 + 35 + mainRam.length + 0x0200 + 12 
-				+ 0x2000 * cartRam.length + 10 + 0x2000 + 48 + 6 + rtcReg.length;
-		if (gbcFeatures) { //#if +gbc
-			size += 2 + 130 + 0x2000;
-		} //#if
+		int size = 53 + mainRam.length + 0x01A0 + 0x2000 * cartRam.length + rtcReg.length
+				+ 0x2000 + 48;
+		if (gbcFeatures) {
+			size += 2 + 129 + 0x2000;
+		}
 		
 		byte[] flatState = new byte[size];
 		int offset = 0;
 		
-		for (; offset < cartName.length(); offset++)
-			flatState[offset] = (byte) cartName.charAt(offset);
-		flatState[offset++] = (byte) 0; // terminate cart name
+		flatState[offset++] = (byte) 1; // version
+		flatState[offset++] = (byte) (gbcFeatures ? 1 : 0);
 		
 		flatState[offset++] = (byte) a;
 		flatState[offset++] = (byte) b;
@@ -369,39 +467,31 @@ public class Dmgcpu implements ICpu {
 		flatState[offset++] = (byte) pc;
 		
 		GBCanvas.setInt(flatState, offset, instrCount);
-		offset+=4;
-		GBCanvas.setInt(flatState, offset, nextHBlank);
-		offset+=4;
-		GBCanvas.setInt(flatState, offset, timaEnabled ? nextTimaOverflow : 0x7fffffff);
 		offset += 4;
-		GBCanvas.setInt(flatState, offset, interruptEnableEnabled ? nextInterruptEnable : 0x7fffffff);
-		offset+=4;
+		GBCanvas.setInt(flatState, offset, nextModeTime);
+		offset += 4;
+		GBCanvas.setInt(flatState, offset, nextTimaOverflow);
+		offset += 4;
 		GBCanvas.setInt(flatState, offset, nextTimedInterrupt);
-		offset+=4;
+		offset += 4;
 		
-		if (gbcFeatures) { //#if +gbc
-			flatState[offset++] = 2; // version
-		} else { //#if -gbc
-			flatState[offset++] = (byte) (gbcDisabled ? 3 : 2); // version
-		} //#if
+		flatState[offset++] = (byte) (timaActive ? 1 : 0);
+		flatState[offset++] = (byte) (graphicsChipMode);
 		flatState[offset++] = (byte) (interruptsEnabled ? 1 : 0);
 		flatState[offset++] = (byte) (interruptsArmed ? 1 : 0);
+		flatState[offset++] = (byte) (interruptEnableRequested ? 1 : 0);
 		
 		System.arraycopy(mainRam, 0, flatState, offset, mainRam.length);
 		offset += mainRam.length;
-		System.arraycopy(oam, 0, flatState, offset, 0x0100);
-		offset += 0x0100;
+		System.arraycopy(oam, 0, flatState, offset, 0x00A0);
+		offset += 0x00A0;
 		System.arraycopy(registers, 0, flatState, offset, 0x0100);
 		offset += 0x0100;
 		
 		GBCanvas.setInt(flatState, offset, divReset);
-		offset+=4;
+		offset += 4;
 		GBCanvas.setInt(flatState, offset, instrsPerTima);
-		offset+=4;
-		
-		// cartridge
-		GBCanvas.setInt(flatState, offset, cartType);
-		offset+=4;
+		offset += 4;
 		
 		for (int j = 0; j < cartRam.length; j++) {
 			System.arraycopy(cartRam[j], 0, flatState, offset, 0x2000);
@@ -409,9 +499,9 @@ public class Dmgcpu implements ICpu {
 		}
 		
 		GBCanvas.setInt(flatState, offset, currentRomBank);
-		offset+=4;
+		offset += 4;
 		GBCanvas.setInt(flatState, offset, currentRamBank);
-		offset+=4;
+		offset += 4;
 		
 		flatState[offset++] = (byte) (mbc1LargeRamMode ? 1 : 0);
 		flatState[offset++] = (byte) (cartRamEnabled ? 1 : 0);
@@ -421,13 +511,13 @@ public class Dmgcpu implements ICpu {
 		
 		offset = graphicsChip.flatten(flatState, offset);
 		
-		if (gbcFeatures) { //#if +gbc
+		if (gbcFeatures) {
 			flatState[offset++] = (byte) gbcRamBank;
 			flatState[offset++] = (byte) (hdmaRunning ? 1 : 0);
-		} //#if
+		}
 
 		if (offset != flatState.length)
-			throw new RuntimeException("flatten offset error:" + Integer.toString(offset, 16) + ", " + Integer.toString(flatState.length, 16));
+			throw new RuntimeException("error#21: " + offset + ", " + flatState.length);
 		
 		return flatState;
 	}
@@ -436,126 +526,76 @@ public class Dmgcpu implements ICpu {
 		*  the memory
 		*/
 	public final int addressRead(int addr) {
-		if (gbcFeatures) { //#if +gbc
-			if (addr < 0xa000) {
+		if (addr < 0xa000) {
+			return memory[addr >> 13][addr & 0x1fff];
+		} else if (addr < 0xc000) {
+			if (currentRamBank >= 8) { // real time clock
+				rtcSync();
+				return rtcReg[currentRamBank - 8];
+			} else
 				return memory[addr >> 13][addr & 0x1fff];
-			} else if (addr < 0xc000) {
-				if (currentRamBank >= 8) { // real time clock
-					rtcSync();
-					return rtcReg[currentRamBank-8];
-				} else
-					return memory[addr >> 13][addr & 0x1fff];
-			} else if ((addr & 0x1000) == 0) {
-				return mainRam[addr & 0x0fff];
-			} else if (addr < 0xfe00) {
-				return mainRam[(addr & 0x0fff) + gbcRamBank * 0x1000];
-			} else if (addr < 0xFF00) {
-				return (oam[addr - 0xFE00] & 0x00FF);
-			} else {
-				return ioRead(addr - 0xFF00);
-			}
-		} else { //#if -gbc
-			if (addr < 0xa000) {
-				return memory[addr >> 13][addr & 0x1fff];
-			} else if (addr < 0xc000) {
-				if (currentRamBank >= 8) { // real time clock
-					rtcSync();
-					return rtcReg[currentRamBank-8];
-				} else
-					return memory[addr >> 13][addr & 0x1fff];
-			} else if (addr < 0xfe00) {
-				return mainRam[addr & 0x1fff];
-			} else if (addr < 0xFF00) {
-				return (oam[addr - 0xFE00] & 0x00FF);
-			} else {
-				return ioRead(addr - 0xFF00);
-			}
-		} //#if
+		} else if ((addr & 0x1000) == 0) {
+			return mainRam[addr & 0x0fff];
+		} else if (addr < 0xfe00) {
+			return mainRam[(addr & 0x0fff) + gbcRamBank * 0x1000];
+		} else if (addr < 0xFF00) {
+			if (addr > 0xFEA0) // outside OAM range
+				return 0xff;
+			return (oam[addr - 0xFE00] & 0xFF);
+		} else {
+			return ioRead(addr - 0xFF00);
+		}
 	}
 	
 	/** Performs a CPU address space write.  Maps all of the relevant object into the right parts of
 		*  memory.
 		*/
 	public final void addressWrite(int addr, int data) {
-		if (gbcFeatures) { //#if +gbc
-			int bank = addr >> 12;
-			switch (bank) {
-				case 0x0:
-				case 0x1:
-				case 0x2:
-				case 0x3:
-				case 0x4:
-				case 0x5:
-				case 0x6:
-				case 0x7:
-					cartridgeWrite(addr, data);
-					break;
+		int bank = addr >> 12;
+		switch (bank) {
+			case 0x0:
+			case 0x1:
+			case 0x2:
+			case 0x3:
+			case 0x4:
+			case 0x5:
+			case 0x6:
+			case 0x7:
+				cartridgeWrite(addr, data);
+				break;
 
-				case 0x8:
-				case 0x9:
-					graphicsChip.addressWrite(addr - 0x8000, (byte) data);
-					break;
+			case 0x8:
+			case 0x9:
+				graphicsChip.addressWrite(addr - 0x8000, (byte) data);
+				break;
 
-				case 0xA:
-				case 0xB:
-					cartridgeWrite(addr, data);
-					break;
+			case 0xA:
+			case 0xB:
+				cartridgeWrite(addr, data);
+				break;
 
-				case 0xC:
-					mainRam[addr - 0xC000] = (byte) data;
-					break;
-					
-				case 0xD:
-					mainRam[addr - 0xD000 + gbcRamBank * 0x1000] = (byte) data;
-					break;
+			case 0xC:
+				mainRam[addr - 0xC000] = (byte) data;
+				break;
+				
+			case 0xD:
+				mainRam[addr - 0xD000 + gbcRamBank * 0x1000] = (byte) data;
+				break;
 
-				case 0xE:
-					mainRam[addr - 0xE000] = (byte) data;
-					break;
-					
-				case 0xF:
-					if (addr < 0xFE00) {
-						mainRam[addr - 0xF000 + gbcRamBank * 0x1000] = (byte) data;
-					} else if (addr < 0xFF00) {
-						oam[addr - 0xFE00] = (byte) data;
-					} else {
-						ioWrite(addr - 0xFF00, data);
-					}
-					break;
-			}
-		} else { //#if -gbc
-			int bank = addr >> 13;
-			switch (bank) {
-				case 0x0:
-				case 0x1:
-				case 0x2:
-				case 0x3:
-					cartridgeWrite(addr, data);
-					break;
-
-				case 0x4:
-					graphicsChip.addressWrite(addr - 0x8000, (byte) data);
-					break;
-
-				case 0x5:
-					cartridgeWrite(addr, data);
-					break;
-
-				case 0x6:
-					mainRam[addr - 0xC000] = (byte) data;
-					break;
-
-				case 0x7:
-					if (addr < 0xFE00) {
-						mainRam[addr - 0xE000] = (byte) data;
-					} else if (addr < 0xFF00) {
-						oam[addr - 0xFE00] = (byte) data;
-					} else {
-						ioWrite(addr - 0xFF00, data);
-					}
-					break;
-			}
-		} //#if
+			case 0xE:
+				mainRam[addr - 0xE000] = (byte) data;
+				break;
+				
+			case 0xF:
+				if (addr < 0xFE00) {
+					mainRam[addr - 0xF000 + gbcRamBank * 0x1000] = (byte) data;
+				} else if (addr < 0xFF00) {
+					oam[addr - 0xFE00] = (byte) data;
+				} else {
+					ioWrite(addr - 0xFF00, data);
+				}
+				break;
+		}
 	}
 	
 	private final void pushPC() {
@@ -636,7 +676,6 @@ public class Dmgcpu implements ICpu {
 		}
 	}
 	
-	//#if +gbc
 	private void performHdma() {
 		int dmaSrc = ((registers[0x51] & 0xff) << 8)
 				+ ((registers[0x52] & 0xff) & 0xF0);
@@ -654,11 +693,139 @@ public class Dmgcpu implements ICpu {
 		registers[0x53] = (byte) ((dmaDst & 0x1F00) >> 8);
 		registers[0x54] = (byte) (dmaDst & 0x00F0);
 
-		if (registers[0x55] == 0)
+		if (registers[0x55] == 0) {
 			hdmaRunning = false;
+		}
 		registers[0x55]--;
 	}
-	//#if
+
+	public void playSound(int channel, int volume) {
+		if (player == null)
+			return;
+		
+		try {
+			// first (interesting) sound register
+			int basereg = 0x12 + channel * 5;
+			
+			int frequency = ((registers[basereg + 2] & 0x07) << 8) + (registers[basereg + 1] & 0xff);
+			int n = midiLookup[frequency];
+			
+			if ((registers[basereg + 2] & 0x40) == 0) {
+				soundLength[channel] = Integer.MAX_VALUE;
+			}
+
+			if (channel < 2) {
+				soundStartVolume[channel] = volume;
+				
+				soundVolumeDelta[channel] = (registers[basereg] & 0x08) != 0 ? 1 : -1;
+				soundVolumeDeltaPeriod[channel] = registers[basereg] & 0x07;
+				soundVolumeDeltaStep[channel] = 0;
+				if (soundVolumeDeltaPeriod[channel] == 0)
+					soundVolumeDelta[channel] = 0;
+			}
+
+			if (channel == 2)
+				n -= 12;
+
+			if (MeBoy.advancedSound) {
+				if (soundFrequency[channel] > 0) {
+					synth.shortMidiEvent(0x80 + channel, soundFrequency[channel], 127);
+				}
+
+				soundFrequency[channel] = n;
+
+				synth.shortMidiEvent(0xB0 + channel, 7, volume * MASTER_VOLUME);
+
+				if (channel == 0) {
+					// reset pitch wheel
+					synth.shortMidiEvent(0xE0, 0x2000 & 127, 0x2000 >> 7);
+				}
+
+				synth.shortMidiEvent(0x90 + channel, n, 127);
+			} else {
+				if (soundFrequency[channel] > 0) {
+					synth.shortMidiEvent(0x80 + channel, soundFrequency[channel], soundVolume[channel] * MASTER_VOLUME);
+				}
+
+				synth.shortMidiEvent(0x90 + channel, n, volume * MASTER_VOLUME);
+			}
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}
+	}
+
+	public void updateSoundFrequency() {
+		if (player == null)
+			return;
+
+		if (soundFrequency[0] <= 0 || !MeBoy.advancedSound)
+			return;
+
+		int frequency = ((registers[0x14] & 0x07) << 8) + (registers[0x13] & 0xff);
+		int n = midiLookup[frequency];
+
+		try {
+			int wheel = 0x2000 + 1000 * (n - soundFrequency[0]);
+			if (wheel < 0)
+				wheel = 0;
+			if (wheel > 16383)
+				wheel = 16383;
+			
+			synth.shortMidiEvent(0xE0, wheel & 127, wheel >> 7);
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}
+	}
+	
+	public void updateSound(int channel) {
+		if (player == null)
+			return;
+		
+		if (soundFrequency[channel] <= 0)
+			return;
+		
+		try {
+			soundLength[channel] -= 4;
+
+			if (soundLength[channel] <= 0) {
+				stopSound(channel);
+			}
+
+			if (channel < 2 && soundVolumeDelta[channel] != 0) {
+				if (++soundVolumeDeltaStep[channel] >= soundVolumeDeltaPeriod[channel]) {
+					soundVolumeDeltaStep[channel] = 0;
+					soundVolume[channel] = (soundVolume[channel] + soundVolumeDelta[channel]) & 0x0f;
+
+					if (soundVolume[channel] == 0) {
+						stopSound(channel);
+					} else if (MeBoy.advancedSound) {
+						synth.shortMidiEvent(0xB0 + channel, 7, soundVolume[channel] * MASTER_VOLUME);
+					}
+				}
+			}
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}
+	}
+	
+	public void stopSound(int channel) {
+		if (player == null)
+			return;
+		
+		try {
+			if (soundFrequency[channel] > 0) {
+				if (MeBoy.advancedSound) {
+					synth.shortMidiEvent(0x80 + channel, soundFrequency[channel], 127);
+				} else {
+					synth.shortMidiEvent(0x80 + channel, soundFrequency[channel], soundVolume[channel] * MASTER_VOLUME);
+				}
+			}
+
+			soundFrequency[channel] = -1;
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}
+	}
 
 	/** If an interrupt is enabled an the interrupt register shows that it has occured, jump to
 		*  the relevant interrupt vector address
@@ -684,7 +851,8 @@ public class Dmgcpu implements ICpu {
 			setPC(0x60);
 			registers[0x0f] -= INT_P10;
 		} else {
-			throw new RuntimeException("concurrent modification exception: " + mask + " " +  + registers[0xff] + " " +  + registers[0x0f]);
+			// throw new RuntimeException("concurrent modification exception: " + mask + " "
+			//		+ registers[0xff] + " " + registers[0x0f]);
 		}
 		
 		interruptsEnabled = false;
@@ -693,90 +861,118 @@ public class Dmgcpu implements ICpu {
 	
 	/** Check for interrupts that need to be initiated */
 	private final void initiateInterrupts() {
-		if (instrCount - nextHBlank >= 0) {
-			nextHBlank += INSTRS_PER_HBLANK;
-			
-			// belated increase, since the game hopefully only cares during blanks
-			// this *should* have been done when exiting the last hblank and moving
-			// to mode 2, but this is faster.
-			registers[0x44]++;
-			
-			if (gbcFeatures) { //#if +gbc
-				if (hdmaRunning)
-					performHdma();
-			} //#if
-
-			// send the line to graphic chip
-			int line = registers[0x44] & 0xff;
-			
-			if (line == 153) {
-				// Resetting at line 154 would seem more correct, but seems to work less well.
-				// (And all timing is approximate anyways.)
-				line = registers[0x44] = 0;
-				// falls through to the line < 144 case below
-			}
-
-			if (line < 144) {
-				graphicsChip.notifyScanline(line);
-
-				// do a hblank (mode 0)
+		if (instrCount - nextModeTime >= 0) {
+			// changed graphics chip mode
+			if (graphicsChipMode == 3) {
+				// entered mode 0 (unless in vblank)
+				graphicsChipMode = 0;
+				nextModeTime += INSTRS_IN_MODE_0;
+				
+				int line = registers[0x44] & 0xff;
+				
+				if (((registers[0x40] & 0x80) != 0) && ((registers[0xff] & INT_LCDC) != 0)) {
+					if (line < 144) {
+						if ((gbcFeatures) && (hdmaRunning)) {
+							performHdma();
+						}
+						
+						if (((registers[0x41] & 0x08) != 0)) {
+							// trigger "mode 0 entered" interrupt
+							interruptsArmed = true;
+							registers[0x0f] |= INT_LCDC;
+						}
+					}
+				}
+			} else if (graphicsChipMode == 0) {
+				// entered mode 2 (or mode 1, i.e. vblank)
+				graphicsChipMode = 2;
+				nextModeTime += INSTRS_IN_MODE_2;
+				
+				registers[0x44]++;
+				if ((registers[0x44] & 0xff) == 154) {
+					registers[0x44] = 0;
+				}
+				
+				int line = registers[0x44] & 0xff;
+				
+				// check for mode 2 interrupt
+				if (line < 144) {
+					if (((registers[0x41] & 0x20) != 0)) {
+						// trigger "mode 2 entered" interrupt
+						interruptsArmed = true;
+						registers[0x0f] |= INT_LCDC;
+					}
+				}
+				
+				// check for lyc coincidence interrupt
 				if (((registers[0x40] & 0x80) != 0) && ((registers[0xff] & INT_LCDC) != 0)) {
 					if (((registers[0x41] & 0x40) != 0) && ((registers[0x45] & 0xff) == line)) {
 						// trigger "lyc coincidence" interrupt
 						interruptsArmed = true;
 						registers[0x0f] |= INT_LCDC;
-					} else if (((registers[0x41] & 0x08) != 0)) {
-						// trigger "mode 0 entered" interrupt
+					}
+				}
+				
+				if (line == 144) {
+					// whole frame done, draw buffer and start vblank
+					graphicsChip.vBlank();
+	
+					if (((registers[0x40] & 0x80) != 0) && ((registers[0xff] & INT_VBLANK) != 0)) {
 						interruptsArmed = true;
-						registers[0x0f] |= INT_LCDC;
+						registers[0x0f] |= INT_VBLANK;
+	
+						if (((registers[0x41] & 0x10) != 0) && ((registers[0xff] & INT_LCDC) != 0)) {
+							// VBLANK LCDC
+							// armed is already set
+							registers[0x0f] |= INT_LCDC;
+						}
 					}
-				}
-			} else if (line == 144) {
-				// (note: the vblank is not sent at the beginning of line 144, but rather when the
-				// next hblank would occur on that line. I don't know if it makes a difference.)
-				
-				// whole frame done, draw buffer and start vblank
-				graphicsChip.vBlank();
-				
-				if (((registers[0x40] & 0x80) != 0) && ((registers[0xff] & INT_VBLANK) != 0)) {
-					interruptsArmed = true;
-					registers[0x0f] |= INT_VBLANK;
 					
-					if (((registers[0x41] & 0x10) != 0) && ((registers[0xff] & INT_LCDC) != 0)) {
-						// VBLANK LCDC
-						// armed is already set
-						registers[0x0f] |= INT_LCDC;
+					for (int i = 0; i < 3; i++)
+						updateSound(i);
+				}
+				
+				if (line == 0) {
+					if (p10Requested) {
+						p10Requested = false;
+						
+						if ((registers[0xff] & INT_P10) != 0) {
+							registers[0x0f] |= INT_P10;
+						}
+		
+						interruptsArmed = (registers[0xff] & registers[0x0f]) != 0;
 					}
 				}
-			}
-			
-			if (!interruptsArmed && p10Requested) {
-				p10Requested = false;
-				if ((registers[0xff] & INT_P10) != 0) {
-					registers[0x0f] |= INT_P10;
+			} else {
+				// entered mode 3 (unless in vblank)
+				graphicsChipMode = 3;
+				nextModeTime += INSTRS_IN_MODE_3;
+				
+				int line = registers[0x44] & 0xff;
+				if (line < 144) {
+					// send the line to graphic chip
+					graphicsChip.notifyScanline(line);
 				}
-
-				interruptsArmed = (registers[0xff] & registers[0x0f]) != 0;
 			}
-		} else if (timaEnabled && instrCount - nextTimaOverflow >= 0) {
-			nextTimaOverflow += instrsPerTima * (0x100 - registers[0x06]);
+		}
+		
+		if (timaActive && instrCount - nextTimaOverflow >= 0) {
+			nextTimaOverflow += instrsPerTima * (0x100 - (registers[0x06] & 0xff));
 			
 			if ((registers[0xff] & INT_TIMA) != 0) {
 				interruptsArmed = true;
 				registers[0x0f] |= INT_TIMA;
 			}
 		}
-		
-		if (interruptEnableEnabled && instrCount - nextInterruptEnable >= 0) {
-			interruptsEnabled = true;
 
-			interruptEnableEnabled = false;
+		if (interruptEnableRequested) {
+			interruptsEnabled = true;
+			interruptEnableRequested = false;
 		}
 		
-		if (timaEnabled)
-			nextTimedInterrupt = nextHBlank - nextTimaOverflow < 0 ? nextHBlank : nextTimaOverflow;
-		else
-			nextTimedInterrupt = nextHBlank;
+		nextTimedInterrupt = nextModeTime;
+		if (timaActive && nextTimaOverflow < nextTimedInterrupt)
+			nextTimedInterrupt = nextTimaOverflow;
 	}
 	
 	public final void setPC(int pc) {
@@ -785,10 +981,10 @@ public class Dmgcpu implements ICpu {
 			localPC = pc & 0x1fff;
 			globalPC = pc & 0xe000;
 			decoderMaxCruise = (pc < 0xe000) ? 0x1ffd : 0x1dfd;
-			if (gbcFeatures) { //#if +gbc
+			if (gbcFeatures) {
 				if (gbcRamBank > 1 && pc >= 0xC000)
 					decoderMaxCruise &= 0x0fff; // can't cruise in switched ram bank
-			} //#if
+			}
 		} else {
 			decoderMemory = registers;
 			localPC = pc & 0xff;
@@ -801,6 +997,8 @@ public class Dmgcpu implements ICpu {
 		int regNum = b2 & 0x07;
 		int data = registerRead(regNum);
 		int newf;
+		
+		instrCount += cyclesPerInstrShift[b2];
 		
 		/*
 		00ooorrr = operation ooo on register rrr
@@ -1063,6 +1261,7 @@ public class Dmgcpu implements ICpu {
 	}
 	
 	public final void run() {
+		try {
 		terminate = false;
 		
 		int newf = 0;
@@ -1074,18 +1273,6 @@ public class Dmgcpu implements ICpu {
 		graphicsChip.timer = startTime;
 		
 		while (!terminate) {
-			instrCount++;
-			
-			/* debug code for timing 18000000 instructions, which is roughly the time for a demo for SML 
-			if (MeBoy.timing && instrCount >= 18000000) {
-				int time = ((int) System.currentTimeMillis() - startTime + 50)/100;
-				MeBoy.log("18M time: " + time);
-				terminate = true;
-				screen.showFps = true;
-				graphicsChip.lastSkipCount = time;
-				screen.repaint();
-			}/* */
-			
 			if (localPC <= decoderMaxCruise) {
 				b1 = decoderMemory[localPC++] & 0xff;
 				offset = decoderMemory[localPC];
@@ -1195,7 +1382,7 @@ public class Dmgcpu implements ICpu {
 				case 0x10: // STOP
 					localPC++;
 					
-					if (gbcFeatures) { //#if +gbc
+					if (gbcFeatures) {
 						if ((registers[0x4D] & 0x01) != 0) {
 							int newKey1Reg = registers[0x4D] & 0xFE;
 							int multiplier = 1;
@@ -1205,15 +1392,14 @@ public class Dmgcpu implements ICpu {
 								multiplier = 2;
 								newKey1Reg |= 0x80;
 							}
-							
-							INSTRS_PER_HBLANK = BASE_INSTRS_PER_HBLANK * multiplier;
-							INSTRS_PER_DIV = BASE_INSTRS_PER_DIV * multiplier;
-							INSTRS_IN_MODE_0 = BASE_INSTRS_IN_MODE_0 * multiplier;
-							INSTRS_IN_MODE_0_2 = BASE_INSTRS_IN_MODE_0_2 * multiplier;
 
+							INSTRS_IN_MODE_0 = BASE_INSTRS_IN_MODE_0 * multiplier;
+							INSTRS_IN_MODE_2 = BASE_INSTRS_IN_MODE_2 * multiplier;
+							INSTRS_IN_MODE_3 = BASE_INSTRS_IN_MODE_3 * multiplier;
+							
 							registers[0x4D] = (byte) newKey1Reg;
 						}
-					} //#if
+					}
 
 					break;
 				case 0x11: // LD DE, nnnn
@@ -1549,12 +1735,18 @@ public class Dmgcpu implements ICpu {
 				case 0x75: addressWrite(hl, hl); break;
 				case 0x76: // HALT
 					interruptsEnabled = true;
-					
-					while (!interruptsArmed) {
-						instrCount = nextTimedInterrupt;
-						
-						initiateInterrupts();
+
+					if (interruptsArmed) {
+						nextTimedInterrupt = instrCount;
+					} else {
+						while (!interruptsArmed) {
+							instrCount = nextTimedInterrupt;
+							initiateInterrupts();
+						}
+						instrCount++;
+						nextTimedInterrupt = instrCount;
 					}
+
 					break;
 				case 0x77: addressWrite(hl, a); break;
 					
@@ -1749,6 +1941,9 @@ public class Dmgcpu implements ICpu {
 					break;
 				case 0xD9: // RETI
 					interruptsEnabled = true;
+					if (interruptsArmed) {
+						nextTimedInterrupt = instrCount;
+					}
 					popPC();
 					break;
 				case 0xDA: // JP C, nnnn
@@ -1765,7 +1960,7 @@ public class Dmgcpu implements ICpu {
 						setPC(((b3 & 0xff) << 8) + b2);
 					}
 					break;
-				case 0xDE : // SBC A, nn
+				case 0xDE: // SBC A, nn
 					localPC++;
 					if ((f & F_CARRY) != 0) {
 						b2++;
@@ -1846,18 +2041,15 @@ public class Dmgcpu implements ICpu {
 					break;
 				case 0xF0: // LDH A, (FFnn)
 					localPC++;
-					if (b2 > 0x41)
-						a = registers[b2] & 0xff;
-					else
-						a = ioRead(b2) & 0xff;
+					a = ioRead(b2) & 0xff; // fixme, direct access?
 					
 					break;
 				case 0xF1: // POP AF
-					f = addressRead(sp++) & 0xf0;
+					f = addressRead(sp++) & 0xff; // fixme, f0 or ff?
 					a = addressRead(sp++) & 0xff;
 					break;
 				case 0xF2: // LD A, (FF00 + C)
-					a = ioRead(c) & 0xff;
+					a = ioRead(c) & 0xff; // fixme, direct access?
 					break;
 				case 0xF3: // DI
 					interruptsEnabled = false;
@@ -1895,11 +2087,8 @@ public class Dmgcpu implements ICpu {
 					a = addressRead(((b3 & 0xff) << 8) + b2) & 0xff;
 					break;
 				case 0xFB: // EI
-					nextInterruptEnable = instrCount;
-					nextTimedInterrupt = nextInterruptEnable;
-					interruptEnableEnabled = true;
-					// note: since initiateInterrupts is run after checkInterrupts, this
-					// causes the correct 1 instruction delay
+					interruptEnableRequested = true;
+					nextTimedInterrupt = instrCount + cyclesPerInstr[b1] + 1; // fixme, this is an ugly hack
 					break;
 				case 0xFE: // CP nn
 					localPC++;
@@ -1919,20 +2108,23 @@ public class Dmgcpu implements ICpu {
 					if ((b1 & 0xC0) == 0x80) { // Byte 0x10?????? indicates ALU op, i.e. 0x80 - 0xbf
 						executeALU(b1);
 					} else {
-						MeBoy.log("Unrecognized opcode (" + Integer.toHexString(b1) + ")");
-						terminate = true;
-						MeBoy.showLog();
-						break;
+						throw new RuntimeException(Integer.toHexString(b1));
 					}
 			}
 			
-			if (interruptsArmed && interruptsEnabled) {
-				checkInterrupts();
-			}
+			instrCount += cyclesPerInstr[b1];
 			
 			if (instrCount - nextTimedInterrupt >= 0) {
 				initiateInterrupts();
+				
+				if (interruptsArmed && interruptsEnabled) {
+					checkInterrupts();
+				}
 			}
+		}
+		} catch (Exception ex) {
+			terminate();
+			MeBoy.showError(null, "error#20", ex);
 		}
 	}
 	
@@ -1946,10 +2138,8 @@ public class Dmgcpu implements ICpu {
 		ioWrite(0x47, 0xFC);
 		ioWrite(0x48, 0xFF);
 		ioWrite(0x49, 0xFF);
-		//#if +gbc
 		registers[0x55] = (byte) 0x80;
 		hdmaRunning = false;
-		//#if
 	}
 	
 	/** Read data from IO Ram */
@@ -1965,17 +2155,7 @@ public class Dmgcpu implements ICpu {
 			if ((registers[0x44] & 0xff) >= 144) {
 				output |= 1; // mode 1
 			} else {
-				int cyclePos = instrCount - nextHBlank + INSTRS_PER_HBLANK; // instrCount % INSTRS_PER_HBLANK;
-				
-				if (cyclePos == INSTRS_PER_HBLANK) {
-					// mode 0
-				} else if (cyclePos > INSTRS_IN_MODE_0_2) {
-					// Mode 3
-					output |= 3;
-				} else if (cyclePos > INSTRS_IN_MODE_0) {
-					// Mode 2
-					output |= 2;
-				} // else mode 0
+				output |= graphicsChipMode;
 			}
 			
 			return output;
@@ -1984,8 +2164,8 @@ public class Dmgcpu implements ICpu {
 			return (byte) ((instrCount - divReset - 1) / INSTRS_PER_DIV);
 		} else if (num == 0x05) {
 			// TIMA
-			if (!timaEnabled)
-				return 0;
+			if (!timaActive)
+				return registers[num];
 			
 			return ((instrCount + instrsPerTima * 0x100 - nextTimaOverflow) / instrsPerTima);
 		}
@@ -2021,6 +2201,9 @@ public class Dmgcpu implements ICpu {
 					if ((registers[0xff] & INT_SER) != 0) {
 						interruptsArmed = true;
 						registers[0x0f] |= INT_SER;
+						
+						if (interruptsEnabled)
+							nextTimedInterrupt = instrCount;
 					}
 					registers[0x02] &= 0x7F;
 				}
@@ -2032,129 +2215,154 @@ public class Dmgcpu implements ICpu {
 				break;
 				
 			case 0x05: // TIMA
-				if (timaEnabled)
+				if (timaActive)
 					nextTimaOverflow = instrCount + instrsPerTima * (0x100 - (data & 0xff));
 				break;
 				
 			case 0x07: // TAC
 				if ((data & 0x04) != 0) {
-					int instrsPerSecond = INSTRS_PER_HBLANK * 154 * 60;
-					int clockFrequency = (data & 0x03);
-					
-					switch (clockFrequency) {
-						case 0:
-							instrsPerTima = (instrsPerSecond / 4096);
-							break;
-						case 1:
-							instrsPerTima = (instrsPerSecond / 262144);
-							break;
-						case 2:
-							instrsPerTima = (instrsPerSecond / 65536);
-							break;
-						case 3:
-							instrsPerTima = (instrsPerSecond / 16384);
-							break;
+					if (!timaActive) {
+						timaActive = true;
+						nextTimaOverflow = instrCount + instrsPerTima * (0x100 - (registers[0x05] & 0xff));
 					}
-					nextTimaOverflow = instrCount + instrsPerTima * (0x100 - registers[0x06]); // this should probably read from whatever register[0x05] was before tima stopped/reset?
-					timaEnabled = true;
+					
+					instrsPerTima = 4 << (2 * ((data-1)&3));
+					// 0-3 -> {256, 4, 16, 64}
 				} else {
-					timaEnabled = false;
+					if (timaActive) {
+						timaActive = false;
+						registers[0x05] = (byte) ((instrCount + instrsPerTima * 0x100 - nextTimaOverflow) / instrsPerTima);
+					}
 				}
-				
+				registers[num] = (byte) data;
 				break;
 				
 			case 0x0f:
-				registers[0x0f] = (byte) data;
+				registers[num] = (byte) data;
 				interruptsArmed = (registers[0xff] & registers[0x0f]) != 0;
+				
+				if (interruptsArmed && interruptsEnabled)
+					nextTimedInterrupt = instrCount;
 				break;
 				
-				// sound registers: 10 11 12 13 14 16 17 18 19 1a 1b 1c 1d 1e 20 21 22 23 24 25 26 30-3f
+			// sound registers: 10 11 12 13 14 16 17 18 19 1a 1b 1c 1d 1e 20 21 22 23 24 25 26 30-3f
+
+			// 0x10: Sound 1 freq sweep
+			// 0x11: Sound 1 length
 				
+			case 0x12: // Sound 1 volume + volume sweep
+				registers[num] = (byte) data;
+				if ((data & 0xf0) == 0)
+					stopSound(0);
+				break;
+
+			// 0x13: Sound 1 freq 0-7
+				
+			case 0x14: // Sound 1 frequency 8-10 + control
+				registers[num] = (byte) data;
+				if ((data & 0x80) != 0) {
+					soundLength[0] = (64 - (registers[0x11] & 63));
+					playSound(0, (registers[0x12] >> 4) & 0x0F);
+				} else {
+					updateSoundFrequency();
+				}
+				break;
+
+			// 0x15: Unused
+			// 0x16: Sound 2 length
+				
+			case 0x17: // Sound 2 volume + volume sweep
+				registers[num] = (byte) data;
+				if ((data & 0xf0) == 0)
+					stopSound(1);
+				break;
+
+			// 0x18: Sound 2 freq 0-7
+				
+			case 0x19: // Sound 2 frequency 8-10 + control
+				registers[num] = (byte) data;
+				if ((data & 0x80) != 0) {
+					soundLength[1] = (64 - (registers[0x16] & 63));
+					playSound(1, (registers[0x17] >> 4) & 0x0F);
+				}
+				break;
+
 			case 0x1a:
 				// sound mode 3, on/off
 				registers[num] = (byte) data;
-				if ((data & 0x80) == 0)
+				if ((data & 0x80) == 0) {
+					stopSound(2);
 					registers[0x26] &= 0xfb; // clear bit 2 of sound status register
+				}
 				break;
+
+			// 0x1b: Sound 3 length
+
+			case 0x1c: // Sound 3 volume
+				registers[num] = (byte) data;
+				if ((registers[num] & 0x60) == 0)
+					stopSound(2);
+				break;
+
+			// 0x1d: Sound 3 freq 0-7
+
+			case 0x1e: // Sound 3 frequency 8-10 + control
+				registers[num] = (byte) data;
+				if ((data & 0x80) != 0) {
+					soundLength[2] = (256 - (registers[0x1b] & 0xff));
+					playSound(2, (((0x08 >> ((registers[0x1c] >> 5) & 3)) & 0x07))); // ugh
+				}
+				break;
+			
+			// 0x20-0x23: Sound 4
+			
+			// 0x24: Channel control
 				
+			// 0x25: Selection of sound terminal
+				
+			// 0x26: Sound on/off
+				
+			// 0x30-0x3f: Sound 3 wave pattern
+			
 			case 0x40: // LCDC
-				graphicsChip.bgEnabled = true;
-				
-				// BIT 7
-				graphicsChip.lcdEnabled = ((data & 0x80) != 0);
-				
-				// BIT 6
-				graphicsChip.hiWinTileMapAddress = ((data & 0x40) != 0);
-				
-				// BIT 5
-				graphicsChip.winEnabled = ((data & 0x20) != 0);
-				
-				// BIT 4
-				graphicsChip.bgWindowDataSelect = ((data & 0x10) != 0);
-				
-				// BIT 3
-				graphicsChip.hiBgTileMapAddress = ((data & 0x08) != 0);
-				
-				// BIT 2
-				graphicsChip.doubledSprites = ((data & 0x04) != 0);
-				
-				// BIT 1
-				if ((data & 0x02) != 0) {
-					graphicsChip.spritesEnabled = true;
-					graphicsChip.spritesEnabledThisFrame = true;
-				} else {
-					graphicsChip.spritesEnabled = false;
-				}
-				
-				// BIT 0
-				if ((data & 0x01) == 0) {
-					if (gbcFeatures) { //#if +gbc
-						graphicsChip.spritePriorityEnabled = false;
-					} else { //#if -gbc
-						// this emulates the gbc-in-gb-mode, not the original gb-mode
-						graphicsChip.bgEnabled = false;
-						graphicsChip.winEnabled = false;
-					} //#if
-				}
-				
-				registers[0x40] = (byte) data;
+				graphicsChip.UpdateLCDCFlags(data);
+				registers[num] = (byte) data;
 				break;
 				
 			case 0x41: // LCDC
-				registers[0x41] = (byte) (data & 0xf8);
+				registers[num] = (byte) (data & 0xf8);
 				break;
-				
-				// fixme, case 0x42 with ((data-reg) % 8) != 0: do something about the messed up drawing.
 				
 			case 0x46: // DMA
 				System.arraycopy(memory[data >> 5], (data << 8) & 0x1f00, oam, 0, 0xa0);
 				// This is meant to be run at the same time as the CPU is executing
 				// instructions, but I don't think it's crucial.
 				break;
+				
 			case 0x47: // FF47 - BKG and WIN palette
 				graphicsChip.decodePalette(0, data);
-				if (registers[0x47] != (byte) data) {
-					registers[0x47] = (byte) data;
+				if (registers[num] != (byte) data) {
+					registers[num] = (byte) data;
 					graphicsChip.invalidateAll(0);
 				}
 				break;
 				
 			case 0x48: // FF48 - OBJ1 palette
 				graphicsChip.decodePalette(4, data);
-				if (registers[0x48] != (byte) data) {
-					registers[0x48] = (byte) data;
+				if (registers[num] != (byte) data) {
+					registers[num] = (byte) data;
 					graphicsChip.invalidateAll(1);
 				}
 				break;
 				
 			case 0x49: // FF49 - OBJ2 palette
 				graphicsChip.decodePalette(8, data);
-				if (registers[0x49] != (byte) data) {
-					registers[0x49] = (byte) data;
+				if (registers[num] != (byte) data) {
+					registers[num] = (byte) data;
 					graphicsChip.invalidateAll(2);
 				}
 				break;
-				
+
 			case 0x4A: // FF4A - Window Position Y
 				if ((data & 0xff) >= 144)
 					graphicsChip.stopWindowFromLine();
@@ -2167,12 +2375,11 @@ public class Dmgcpu implements ICpu {
 				registers[num] = (byte) data;
 				break;
 				
-				//#if +gbc
 			case 0x4F: // FF4F - VRAM Bank - GBC only
-				if (gbcFeatures) { //#if +gbc
+				if (gbcFeatures) {
 					graphicsChip.setVRamBank(data & 0x01);
-				} //#if +gbc
-				registers[0x4F] = (byte) data;
+				}
+				registers[num] = (byte) data;
 				break;
 				
 			case 0x55: // FF55 - HDMA5 - GBC only
@@ -2199,14 +2406,14 @@ public class Dmgcpu implements ICpu {
 				break;
 
 			case 0x68: // FF68 - Background Palette Index - GBC only
-				if (gbcFeatures) { //#if +gbc
+				if (gbcFeatures) {
 					registers[0x69] = (byte) graphicsChip.getGBCPalette(data & 0x3f);
-				} //#if +gbc
-				registers[0x68] = (byte) data;
+				}
+				registers[num] = (byte) data;
 				break;
 
 			case 0x69: // FF69 - Background Palette Data - GBC only
-				if (gbcFeatures) { //#if +gbc
+				if (gbcFeatures) {
 					graphicsChip.setGBCPalette(registers[0x68] & 0x3f, data & 0xff);
 
 					if (registers[0x68] < 0) { // high bit = autoincrement
@@ -2214,18 +2421,20 @@ public class Dmgcpu implements ICpu {
 						registers[0x68] = (byte) (next + 0x80);
 						registers[0x69] = (byte) graphicsChip.getGBCPalette(next);
 					}
-				} //#if +gbc
+				} else {
+					registers[num] = (byte) data;
+				}
 				break;
 
 			case 0x6A: // FF6A - Sprite Palette Index - GBC only
-				if (gbcFeatures) { //#if +gbc
+				if (gbcFeatures) {
 					registers[0x6B] = (byte) graphicsChip.getGBCPalette((data & 0x3f) + 0x40);
-				} //#if +gbc
+				}
 				registers[0x6A] = (byte) data;
 				break;
 
 			case 0x6B: // FF6B - Sprite Palette Data - GBC only
-				if (gbcFeatures) { //#if +gbc
+				if (gbcFeatures) {
 					graphicsChip.setGBCPalette((registers[0x6A] & 0x3f) + 0x40, data & 0xff);
 
 					if (registers[0x6A] < 0) { // high bit = autoincrement
@@ -2233,11 +2442,13 @@ public class Dmgcpu implements ICpu {
 						registers[0x6A] = (byte) (next + 0x80);
 						registers[0x6B] = (byte) graphicsChip.getGBCPalette(next + 0x40);
 					}
-				} //#if +gbc
+				} else {
+					registers[num] = (byte) data;
+				}
 				break;
 
 			case 0x70: // FF70 - GBC Work RAM bank
-				if (gbcFeatures) { //#if +gbc
+				if (gbcFeatures) {
 					if ((data & 0x07) < 2) {
 						gbcRamBank = 1;
 					} else {
@@ -2248,17 +2459,17 @@ public class Dmgcpu implements ICpu {
 						// verify cruising if executing in RAM
 						setPC(globalPC + localPC);
 					}
-				} //#if +gbc
-				registers[0x70] = (byte) data;
+				}
+				registers[num] = (byte) data;
 				break;
-				//#if
 				
 			case 0xff:
-				registers[0xff] = (byte) data;
+				registers[num] = (byte) data;
 				interruptsArmed = (registers[0xff] & registers[0x0f]) != 0;
+				if (interruptsArmed && interruptsEnabled)
+					nextTimedInterrupt = instrCount;
 				break;
-				
-				
+
 			default:
 				registers[num] = (byte) data;
 				break;
@@ -2272,8 +2483,7 @@ public class Dmgcpu implements ICpu {
 	private final void initCartridge() {
 		java.io.InputStream is = getClass().getResourceAsStream(cartName + '0');
 		if (is == null) {
-			MeBoy.log("ERROR: The cart \"" + cartName + "\" does not exist.");
-			throw new RuntimeException();
+			throw new RuntimeException(MeBoy.literal[49] + " (" + cartName + ")");
 		}
 		try {
 			byte[] firstBank = new byte[0x2000];
@@ -2285,18 +2495,14 @@ public class Dmgcpu implements ICpu {
 			
 			cartType = firstBank[0x0147] & 0xff;
 			int numRomBanks = lookUpCartSize(firstBank[0x0148]); // Determine the number of 16kb rom banks
-			//#if +gbc
-			gbcFeatures = ((firstBank[0x143] & 0x80) == 0x80); //#if +gbc
-			//#if -gbc
-			gbcDisabled = MeBoy.disableColor && ((firstBank[0x143] & 0x80) == 0x80);
-			//#if
+			gbcFeatures = ((firstBank[0x143] & 0x80) == 0x80) && !MeBoy.disableColor;
 			
-			if (gbcFeatures) { //#if +gbc
+			if (gbcFeatures) {
 				mainRam = new byte[0x8000]; // 32 kB
-				gbcRamBank = 1;
-			} else { //#if -gbc
+			} else {
 				mainRam = new byte[0x2000]; // 8 kB
-			} //#if
+			}
+			gbcRamBank = 1;
 			
 			if (numRomBanks <= MeBoy.lazyLoadingThreshold) {
 				rom = new byte[numRomBanks * 2][0x2000]; // Recreate the ROM array with the correct size
@@ -2320,7 +2526,7 @@ public class Dmgcpu implements ICpu {
 				rom[0] = firstBank;
 				rom[1] = new byte[0x2000];
 				
-				MeBoy.log("Partial loading active.");
+				// MeBoy.log("Partial loading active.");
 				// Read halfbank 1 (second half of bank 0) into memory
 				total = 0x2000;
 				do {
@@ -2340,31 +2546,25 @@ public class Dmgcpu implements ICpu {
 			
 			MeBoy.log("Loaded '" + cartName + "'. " + numRomBanks + " banks = "
 							+ (numRomBanks * 16) + " kB, " + numRamBanks + " RAM banks.");
-			if (gbcFeatures) { //#if +gbc
-				MeBoy.log("Type: " + cartType + " (color)");
-			} else { //#if -gbc
-				MeBoy.log("Type: " + cartType + " (bw)");
-			} //#if
+			MeBoy.log("Type: " + cartType + (gbcFeatures ? " (color)" : " (bw)"));
 			
 			if (cartType == 6 && numRamBanks == 0)
-				numRamBanks = 1; // fixme, this is not ideal. carttype6 has battery but not ram?
+				numRamBanks = 1; // mbc2 has built-in ram
 			cartRam = new byte[numRamBanks][0x2000];
 			if (numRamBanks > 0)
 				memory[5] = cartRam[0];
 			
 			lastRtcUpdate = (int) System.currentTimeMillis();
-		} catch (Exception e) {
-			MeBoy.log("ERROR: Loading the cart \"" + cartName + "\" failed.");
-			MeBoy.log(e.toString());
-
-			throw new RuntimeException();
+		} catch (Exception ex) {
+			if (MeBoy.debug)
+				ex.printStackTrace();
+			throw new RuntimeException(MeBoy.literal[49] + " (" + cartName + ", " + ex + ")");
 		}
 	}
 	
-	private int[] romTouch;
-	
 	/** Maps a ROM bank into the CPU address space at 0x4000 */
 	private final void mapRom(int bankNo) {
+		bankNo = bankNo & ((rom.length >> 1) -1);
 		currentRomBank = bankNo;
 		
 		romTouch[bankNo] = instrCount;
@@ -2406,8 +2606,8 @@ public class Dmgcpu implements ICpu {
 				int offset = (bankNo & 7) * 0x4000;
 				java.io.InputStream is = getClass().getResourceAsStream(cartName + file);
 				
-				if (is.skip(offset) != offset)
-					throw new RuntimeException("failed skipping to " + bankNo);
+				if (is == null || is.skip(offset) != offset)
+					throw new RuntimeException("Failed skipping to " + bankNo);
 				
 				for (int i = bankNo*2; i < bankNo*2+2; i++) {
 					int total = 0x2000;
@@ -2419,13 +2619,11 @@ public class Dmgcpu implements ICpu {
 				// MeBoy.log("loaded bank " + bankNo + " from " + file + " -> " + loadedRomBanks);
 				
 				is.close();
-			} catch (Exception e) {
-				MeBoy.log("ERROR: Lazy loading the cart \"" + cartName + "\" failed.");
-				MeBoy.log(e.toString());
+			} catch (Exception ex) {
 				if (MeBoy.debug)
-					e.printStackTrace();
+					ex.printStackTrace();
 	
-				throw new RuntimeException();
+				throw new RuntimeException("error#22, " + ex);
 			}
 		}
 		
@@ -2472,10 +2670,11 @@ public class Dmgcpu implements ICpu {
 					}
 				} else if (halfbank == 3) {
 					mbc1LargeRamMode = ((data & 1) == 1);
-				} else if (halfbank == 5) {
-					if (cartRamEnabled) {
-						memory[halfbank][subaddr] = (byte) data;
-					}
+				} else if (halfbank == 5 && memory[halfbank] != null) {
+					// fixme, we should check cartRamEnabled, but that seems
+					// to break Pokemon yellow... (which uses MBC5, but I'm erring
+					// on the side of caution).
+					memory[halfbank][subaddr] = (byte) data;
 				}
 				break;
 				
@@ -2491,9 +2690,11 @@ public class Dmgcpu implements ICpu {
 					} else {
 						cartRamEnabled = ((data & 0x0F) == 0x0A);
 					}
-				} else if (halfbank == 5) {
-					if (cartRamEnabled)
-						memory[halfbank][subaddr] = (byte) data;
+				} else if (halfbank == 5 && memory[halfbank] != null) {
+					// fixme, we should check cartRamEnabled, but that seems
+					// to break Pokemon yellow... (which uses MBC5, but I'm erring
+					// on the side of caution).
+					memory[halfbank][subaddr] = (byte) data;
 				}
 				
 				break;
@@ -2504,7 +2705,9 @@ public class Dmgcpu implements ICpu {
 			case 0x12:
 			case 0x13:
 				// MBC3
-				if (halfbank == 1) {
+				if (halfbank == 0) {
+					cartRamEnabled = ((data & 0x0F) == 0x0A);
+				} else if (halfbank == 1) {
 					// Select ROM bank
 					int bankNo = data & 0x7F;
 					if (bankNo == 0)
@@ -2513,15 +2716,20 @@ public class Dmgcpu implements ICpu {
 				} else if (halfbank == 2) {
 					// Select RAM bank
 					if (cartRam.length > 0)
-						mapRam(data);
+						mapRam(data & 0x03);
+				} else if (halfbank == 3) {
+					// fixme, rtc latch
 				} else if (halfbank == 5) {
 					// memory write
 					if (currentRamBank >= 8) {
 						// rtc register
 						rtcSync();
 						rtcReg[currentRamBank - 8] = (byte) data;
-					} else {
+					} else if (memory[halfbank] != null) {
 						// normal memory
+						// fixme, we should check cartRamEnabled, but that seems
+						// to break Pokemon yellow... (which uses MBC5, but I'm erring
+						// on the side of caution).
 						memory[halfbank][subaddr] = (byte) data;
 					}
 				}
@@ -2535,21 +2743,24 @@ public class Dmgcpu implements ICpu {
 			case 0x1D:
 			case 0x1E:
 				// MBC5
-				if (addr >> 12 == 2) {
+				if (addr >> 12 == 1) {
+					cartRamEnabled = ((data & 0x0F) == 0x0A);
+				} else if (addr >> 12 == 2) {
 					int bankNo = (currentRomBank & 0xFF00) | data;
+					// note: bank 0 can be mapped to 0x4000
 					mapRom(bankNo);
 				} else if (addr >> 12 == 3) {
 					int bankNo = (currentRomBank & 0x00FF) | ((data & 0x01) << 8);
+					// note: bank 0 can be mapped to 0x4000
 					mapRom(bankNo);
 				} else if (halfbank == 2) {
 					if (cartRam.length > 0)
-						mapRam(data & 0x07);
+						mapRam(data & 0x0f);
 				} else if (halfbank == 5) {
-					if (memory[5] != null)
+					if (memory[halfbank] != null) {
+						// fixme, we should check cartRamEnabled, but that seems
+						// to break Pokemon yellow...
 						memory[halfbank][subaddr] = (byte) data;
-					else {
-						// shouldn't be here, the cart type specifies no cart ram,
-						// but the game tries to access it
 					}
 				}
 				break;
@@ -2668,29 +2879,15 @@ public class Dmgcpu implements ICpu {
 		graphicsChip.setScale(screenWidth, screenHeight);
 	}
 	
-	public int getTileWidth() {
-		return graphicsChip.tileWidth;
-	}
-	
-	public int getTileHeight() {
-		return graphicsChip.tileHeight;
-	}
-	
-	public void setTranslation(int left, int top) {
-		graphicsChip.left = left;
-		graphicsChip.top = top;
-	}
-	
 	public int getLastSkipCount() {
 		return graphicsChip.lastSkipCount;
 	}
 	
-	public void draw(Graphics g) {
-		graphicsChip.draw(g);
-	}
-	
 	public void terminate() {
 		terminate = true;
+		stopSound(0);
+		stopSound(1);
+		stopSound(2);
 	}
 	
 	public boolean isTerminated() {

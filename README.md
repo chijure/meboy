@@ -14,6 +14,27 @@ Credits
 MeBoy Change Log
 -
 
+version 2.0: 23 Nov 2008
+-
+
+* Added sound support
+* Added support for sending cart-RAM and suspended games via Bluetooth
+* Added "Advanced graphics" mode with slow but (almost) pixel-perfect emulation
+* Added icon
+* Added "Pause" overlay when paused
+* Improved drawing compatibility ("locked" graphics should be more rare now)
+* Improved interrupt timing emulation
+* Improved instruction timing emulation
+* Improved error messages
+* Dropped backwards compatibility for 1.1/1.2-era savegames
+* Reordered menu items to put most frequently used items first
+* Completely redesigned MeBoyBuilder UI:
+    * Added support for renaming/removing savegames via Bluetooth
+    * Added support for sending/receiving savegames via Bluettoth
+    * Added "select location" dialog for the MeBoy.jar file
+    * Added support for renaming the .jar file (and thus the application)
+    * Improved error messages
+
 version 1.6: 3 Mar 2008
 -
 

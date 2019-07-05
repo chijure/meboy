@@ -6,99 +6,43 @@ Copyright 2005-2008 Bjorn Carlin
 http://www.arktos.se/
 
 Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria
-University of Manchester
+University of Manchester. Bluetooth support based on code contributed by
+Martin Neumann.
 
 This program is free software; you can redistribute it and/or modify it
 under the terms of the GNU General Public License as published by the Free
 Software Foundation; either version 2 of the License, or (at your option)
-any later version.        
+any later version.
 
 This program is distributed in the hope that it will be useful, but WITHOUT
 ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
 more details.
 
 
 You should have received a copy of the GNU General Public License along with
 this program; if not, write to the Free Software Foundation, Inc., 59 Temple
 Place - Suite 330, Boston, MA 02111-1307, USA.
- 
+
 */
 
-import javax.microedition.lcdui.*;
+import javax.microedition.lcdui.Graphics;
+import javax.microedition.lcdui.Image;
 
 
-public class GraphicsChipBW {
-	private final int MS_PER_FRAME = 17;
-
-	/** Tile uses the background palette */
-	// private final int TILE_BKG = 0;
-	
-	/** Tile is flipped horizontally */
-	private final int TILE_FLIPX = 1; // 0x20 in oam attributes
-	
-	/** Tile is flipped vertically */
-	private final int TILE_FLIPY = 2; // 0x40 in oam attributes
-	
-	/** Tile uses the first sprite palette */
-	private final int TILE_OBJ1 = 4; // reset 0x10 in oam attributes
-	
-	/** Tile uses the second sprite palette */
-	private final int TILE_OBJ2 = 8; // set 0x10 in oam attributes
-
-	/** The current contents of the video memory, mapped in at 0x8000 - 0x9FFF */
-	private byte[] videoRam;
-	
-	private byte[][] videoRamBanks; // one for gb, two for gbc
-	
-	
-	/** RGB color values */
-	private final int[] colors = { 0xFFFFFFFF, 0xFFAAAAAA, 0xFF555555, 0xFF000000};
-	private int[] gbPalette = new int[12];
-	boolean bgEnabled = true;
-	boolean winEnabled = true;
+public class SimpleGraphicsChip extends GraphicsChip {
 	boolean winEnabledThisFrame = true;
-	boolean spritesEnabled = true;
 	boolean spritesEnabledThisFrame = true;
-	boolean lcdEnabled = true;
-	boolean spritePriorityEnabled = true;
-	
-	
-	private Graphics g;
-	
-	// skipping, timing:
-	public int timer;
-	private boolean skipping = true; // until graphics is set
-	private int skipCount;
-	
-	// some statistics
-	int lastSkipCount;
-	
-	/** The current frame has finished drawing */
-	boolean frameDone = false;
-	
-	/** Selection of one of two addresses for the BG and Window tile data areas */
-	boolean bgWindowDataSelect = true;
-	
-	/** If true, 8x16 sprites are being used.  Otherwise, 8x8. */
-	boolean doubledSprites = false;
-	
-	/** Selection of one of two address for the BG/win tile map. */
-	boolean hiBgTileMapAddress = false;
-	boolean hiWinTileMapAddress = false;
-	private int tileOffset; // 384 when in vram bank 1 in gbc mode
-	private int tileCount; // 384 for gb, 384*2 for gbc
-	private int colorCount; // number of "logical" colors = palette indices, 12 for gb, 64 for gbc
-	private DmgcpuBW cpu;
-	
-	// Hacks to allow some raster effects to work.  Or at least not to break as badly.
-	boolean savedWindowDataSelect = false;
-	
+	private boolean screenFilled;
 	private boolean windowStopped;
 	private boolean winEnabledThisLine = false;
 	private int windowStopLine = 144;
 	private int windowStopX;
 	private int windowStopY;
+	private boolean frameDone; // ugly framebuffer "mutex"
+
+	// Hacks to allow some raster effects to work.  Or at least not to break as badly.
+	boolean savedWindowDataSelect = false;
 	
 	// tiles & image cache
 	private Image transparentImage;
@@ -106,40 +50,19 @@ public class GraphicsChipBW {
 	private boolean[] tileReadState; // true if there are any images to be invalidated
 	
 	private int[] tempPix;
-	
-	public int left, top;
-	
-	private boolean screenFilled;
-	
-	// scaling the screen
-	private boolean scale;
 
 	int tileWidth = 8;
 	int tileHeight = 8;
-	
-	// lookup table for fast image decoding
-	private static int[] weaveLookup = new int[256];
-	static {
-		for (int i = 1; i < 256; i++) {
-			for (int d = 0; d < 8; d++)
-				weaveLookup[i] += ((i >> d) & 1) << (d * 2);
-		}
-	}
-	
-	
-	/** Create a new GraphicsChipBW connected to the specified CPU */
-	public GraphicsChipBW(DmgcpuBW d) {
-		cpu = d;
-		
-			videoRamBanks = new byte[1][0x2000];
-			tileCount = 384;
-			colorCount = 12;
-			//     1: image
-			// * 384: all images
-			// *   4: mirrored images
-			// *   3: all palettes
 
-		videoRam = videoRamBanks[0];
+	private Graphics g;
+	
+	
+	public SimpleGraphicsChip(Dmgcpu d) {
+		super(d);
+		
+		colors = new int[] { 0xffffffff, 0xffaaaaaa, 0xff555555, 0xff000000};
+		gbcMask = 0xff000000;
+		
 		tileImage = new Image[tileCount * colorCount];
 		tileReadState = new boolean[tileCount];
 		
@@ -148,62 +71,10 @@ public class GraphicsChipBW {
 		tempPix = new int[tileWidth * tileHeight];
 		transparentImage = Image.createRGBImage(tempPix, tileWidth, tileHeight, true);
 		
+		frameBufferImage = Image.createImage(scaledWidth, scaledHeight);
+		g = frameBufferImage.getGraphics();
 	}
-	
-	public int unflatten(byte[] flatState, int offset) {
-		for (int i = 0; i < videoRamBanks.length; i++) {
-			System.arraycopy(flatState, offset, videoRamBanks[i], 0, 0x2000);
-			offset += 0x2000;
-		}
-		
-		for (int i = 0; i < 12; i++) {
-			if ((i & 3) == 0)
-				gbPalette[i] = 0x00ffffff & GBCanvas.getInt(flatState, offset);
-			else
-				gbPalette[i] = 0xff000000 | GBCanvas.getInt(flatState, offset);
-			offset += 4;
-		}
-		
-		bgEnabled = (flatState[offset++] != 0);
-		winEnabled = (flatState[offset++] != 0);
-		spritesEnabled = (flatState[offset++] != 0);
-		
-		bgWindowDataSelect = (flatState[offset++] != 0);
-		doubledSprites = (flatState[offset++] != 0);
-		hiBgTileMapAddress = (flatState[offset++] != 0);
-		
-		hiWinTileMapAddress = ((cpu.registers[0x40] & 0x40) != 0);
-		lcdEnabled = ((cpu.registers[0x40] & 0x80) != 0);
-		
-			invalidateAll(0);
-			invalidateAll(1);
-			invalidateAll(2);
-		
-		return offset;
-	}
-	
-	public int flatten(byte[] flatState, int offset) {
-		for (int i = 0; i < videoRamBanks.length; i++) {
-			System.arraycopy(videoRamBanks[i], 0, flatState, offset, 0x2000);
-			offset += 0x2000;
-		}
-		
-		for (int j = 0; j < 12; j++) {
-			GBCanvas.setInt(flatState, offset, gbPalette[j]);
-			offset += 4;
-		}
-		
-		flatState[offset++] = (byte) (bgEnabled ? 1 : 0);
-		flatState[offset++] = (byte) (winEnabled ? 1 : 0);
-		flatState[offset++] = (byte) (spritesEnabled ? 1 : 0);
-		flatState[offset++] = (byte) (bgWindowDataSelect ? 1 : 0);
-		flatState[offset++] = (byte) (doubledSprites ? 1 : 0);
-		flatState[offset++] = (byte) (hiBgTileMapAddress ? 1 : 0);
-		
-		
-		return offset;
-	}
-	
+
 	/** Writes data to the specified video RAM address */
 	public final void addressWrite(int addr, byte data) {
 		if (addr < 0x1800) { // Bkg Tile data area
@@ -254,11 +125,16 @@ public class GraphicsChipBW {
 				
 				int spriteAttrib = 0;
 				
+				if (cpu.gbcFeatures) {
+					spriteAttrib += 0x20 + ((attributes & 0x07) << 2); // palette
+					tileNum += 384 * ((attributes >> 3) & 0x01); // tile vram bank
+				} else {
 					if ((attributes & 0x10) != 0) {
 						spriteAttrib |= TILE_OBJ2;
 					} else {
 						spriteAttrib |= TILE_OBJ1;
 					}
+				}
 				if ((attributes & 0x20) != 0) {
 					spriteAttrib |= TILE_FLIPX;
 				}
@@ -281,8 +157,8 @@ public class GraphicsChipBW {
 		}
 	}
 	
-	/** This must be called by the CPU for each scanline drawn by the display hardware.  It
-		*  handles drawing of the background layer
+	/** This must be called by the CPU for each scanline drawn by the display hardware. It
+		* handles drawing of the background layer
 		*/
 	public final void notifyScanline(int line) {
 		if (skipping) {
@@ -290,12 +166,13 @@ public class GraphicsChipBW {
 		}
 		
 		if (line == 0) {
-			g.setClip(left, top, 20 * tileWidth, 18 * tileHeight);
+			if (!cpu.gbcFeatures) {
 				g.setColor(gbPalette[0]);
-				g.fillRect(left, top, 20 * tileWidth, 18 * tileHeight);
-
-			if (spritePriorityEnabled)
+				g.fillRect(0, 0, scaledWidth, scaledHeight);
+				
+				// for SimpleGraphics, sprite prio is enabled iff !gbcFeatures
 				drawSprites(0x80);
+			}
 			
 			windowStopLine = 144;
 			winEnabledThisFrame = winEnabled;
@@ -309,8 +186,8 @@ public class GraphicsChipBW {
 			winEnabledThisLine = false;
 		}
 		
-		// Fix to screwed up status bars.  Record which data area is selected on the
-		// first line the window is to be displayed.  Will work unless this is changed
+		// Fix to screwed up status bars. Record which data area is selected on the
+		// first line the window is to be displayed. Will work unless this is changed
 		// after window is started
 		// NOTE: Still no real support for hblank effects on window/sprites
 		if (line == (cpu.registers[0x4A] & 0xff) + 1) { // Compare against WY reg
@@ -356,6 +233,13 @@ public class GraphicsChipBW {
 				}
 				
 				int tileAttrib = 0;
+				if (cpu.gbcFeatures) {
+					int mapAttrib = videoRamBanks[1][memStart + (tileX & 0x1f)];
+					tileAttrib += (mapAttrib & 0x07) << 2; // palette
+					tileAttrib += (mapAttrib >> 5) & 0x03; // mirroring
+					tileNum += 384 * ((mapAttrib >> 3) & 0x01); // tile vram bank
+					// bit 7 (priority) is ignored
+				}
 				tileX++;
 
 				draw(tileNum, screenX, screenY, tileAttrib);
@@ -366,68 +250,15 @@ public class GraphicsChipBW {
 			if (screenY >= 136)
 				screenFilled = true;
 		}
-		if (line == 143 && !screenFilled) {
-			notifyScanline(144); // fudge to update last part of screen when scrolling in y direction
+		if (line == 143) {
+			if (!screenFilled)
+				notifyScanline(144); // fudge to update last part of screen when scrolling in y direction
+			updateFrameBufferImage();
 		}
 	}
 	
-	public final void vBlank() {
-		// if (MeBoy.timing) return;
-		
-		timer += MS_PER_FRAME;
-		
-		if (skipping && g != null) { // if g == null, we need to do a redraw to set it
-			skipCount++;
-			if (skipCount >= MeBoy.maxFrameSkip) {
-				// can't keep up, force draw next frame and reset timer (if lagging)
-				skipping = false;
-				int lag = (int) System.currentTimeMillis() - timer;
-				
-				if (lag > MS_PER_FRAME)
-					timer += lag - MS_PER_FRAME;
-			} else
-				skipping = (timer - ((int) System.currentTimeMillis()) < 0);
-			return;
-		}
-		
-		if (!lcdEnabled && g != null) {
-			// clear screen
-			g.setClip(left, top, 20 * tileWidth, 18 * tileHeight);
-				g.setColor(gbPalette[0]);
-			g.fillRect(left, top, 20 * tileWidth, 18 * tileHeight);
-		}
-		
-		lastSkipCount = skipCount;
-		frameDone = false;
-		cpu.screen.repaint();
-		while (!frameDone && !cpu.terminate) {
-			Thread.yield();
-		}
-		
-		int now = (int) System.currentTimeMillis();
-		
-		if (MeBoy.maxFrameSkip == 0)
-			skipping = false;
-		else
-			skipping = timer - now < 0;
-		
-		// sleep if too far ahead
-		try {
-			while (timer > now + MS_PER_FRAME) {
-				Thread.sleep(1);
-				now = (int) System.currentTimeMillis();
-			}
-		} catch (InterruptedException e) {
-			// e.printStackTrace();
-		}
-		
-		skipCount = 0;
-	}
-	
-	public final void draw(Graphics g) {
+	private final void updateFrameBufferImage() {
 		if (lcdEnabled) {
-			this.g = g;
-			
 			/* Draw window */
 			if (winEnabledThisFrame) {
 				int wx, wy;
@@ -442,13 +273,15 @@ public class GraphicsChipBW {
 					wy = (cpu.registers[0x4A] & 0xff);
 				}
 
+				if (!cpu.gbcFeatures) {
 					g.setColor(gbPalette[0]);
 					int h = windowStopLine - wy;
 					int w = 160 - wx;
-					g.fillRect(((wx * tileWidth) >> 3) + left,
-							((wy * tileHeight) >> 3) + top,
+					g.fillRect(((wx * tileWidth) >> 3),
+							((wy * tileHeight) >> 3),
 							(w * tileWidth) >> 3,
 							(h * tileHeight) >> 3);
+				}
 				
 				int tileNum, tileAddress;
 				int screenY = wy;
@@ -471,6 +304,13 @@ public class GraphicsChipBW {
 						}
 						
 						int tileAttrib = 0;
+						if (cpu.gbcFeatures) {
+							int mapAttrib = videoRamBanks[1][tileAddress];
+							tileAttrib += (mapAttrib & 0x07) << 2; // palette
+							tileAttrib += (mapAttrib >> 5) & 0x03; // mirroring
+							tileNum += 384 * ((mapAttrib >> 3) & 0x01); // tile vram bank
+							// bit 7 (priority) is ignored
+						}
 
 						draw(tileNum, screenX, screenY, tileAttrib);
 						
@@ -480,18 +320,35 @@ public class GraphicsChipBW {
 				}
 			}
 			
-			if (!spritePriorityEnabled)
+			if (cpu.gbcFeatures) {
+				// for SimpleGraphics, sprite prio is enabled iff !gbcFeatures
 				drawSprites(0x80);
+			}
 			drawSprites(0);
+		} else {
+			// lcd disabled
+			if (cpu.gbcFeatures) {
+				g.setColor(-1);
+			} else {
+				g.setColor(gbPalette[0]);
+			}
+			g.fillRect(0, 0, scaledWidth, scaledHeight);
 		}
 		
-		frameDone = true;
 		spritesEnabledThisFrame = spritesEnabled;
 	}
 	
+	public final void repaint() {
+		frameDone = false;
+		cpu.screen.redrawSmall();
+		while (!frameDone && !cpu.terminate) {
+			Thread.yield();
+		}
+	}
+	
 	/** Create the image of a tile in the tile cache by reading the relevant data from video
-		*  memory
-		*/
+	* memory
+	*/
 	private final Image updateImage(int tileIndex, int attribs) {
 		int index = tileIndex + tileCount * attribs;
 		
@@ -503,7 +360,11 @@ public class GraphicsChipBW {
 		
 		byte[] vram = otherBank ? videoRamBanks[1] : videoRamBanks[0];
 		int[] palette;
+		if (cpu.gbcFeatures) {
+			palette = gbcPalette;
+		} else {
 			palette = gbPalette;
+		}
 		boolean transparent = palette[paletteStart] >= 0; // i.e. if high byte of color #0 is ff, image can never be transparent
 
 		int pixix = 0;
@@ -599,14 +460,7 @@ public class GraphicsChipBW {
 			x = (x * tileWidth) >> 3;
 		}
 		
-		g.drawImage(im, left + x, top + y, 20);
-	}
-
-	/** Set the palette from the internal Gameboy format */
-	public void decodePalette(int startIndex, int data) {
-		for (int i = 0; i < 4; i++)
-			gbPalette[startIndex + i] = colors[((data >> (2 * i)) & 0x03)];
-		gbPalette[startIndex] &= 0x00ffffff;
+		g.drawImage(im, x, y, 20);
 	}
 	
 	public final void stopWindowFromLine() {
@@ -615,7 +469,7 @@ public class GraphicsChipBW {
 		windowStopX = (cpu.registers[0x4B] & 0xff) - 7;
 		windowStopY = (cpu.registers[0x4A] & 0xff);
 	}
-	
+
 	public void setScale(int screenWidth, int screenHeight) {
 		int oldTW = tileWidth;
 		int oldTH = tileHeight;
@@ -631,6 +485,9 @@ public class GraphicsChipBW {
 		
 		scale = tileWidth != 8 || tileHeight != 8;
 		
+		scaledWidth = tileWidth * 20;
+		scaledHeight = tileHeight * 18;
+		
 		if (tileWidth != oldTW || tileHeight != oldTH) {
 			// invalidate cache
 			for (int r = 0; r < tileImage.length; r++)
@@ -641,6 +498,12 @@ public class GraphicsChipBW {
 		}
 		
 		tempPix = new int[tileWidth * tileHeight];
+		
+		frameBufferImage = Image.createImage(scaledWidth, scaledHeight);
+		g = frameBufferImage.getGraphics();
 	}
 	
+	public final void notifyRepainted() {
+		frameDone = true;
+	}
 }
