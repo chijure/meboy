@@ -2117,6 +2117,7 @@ public class Dmgcpu implements Runnable {
 		}
 		} catch (Exception ex) {
 			terminate();
+			ex.printStackTrace();
 			MeBoy.showError(null, "error#20", ex);
 		}
 	}
@@ -2366,6 +2367,15 @@ public class Dmgcpu implements Runnable {
 				if ((data & 0xff) >= 167)
 					graphicsChip.stopWindowFromLine();
 				registers[num] = (byte) data;
+				break;
+				
+			case 0x4D: // FF4D - KEY1 - CGB Mode Only - Prepare Speed Switch
+				if (gbcFeatures) {
+					// high bit is read only
+					registers[num] = (byte) ((data & 0x7f) + (registers[num] & 0x80));
+				} else {
+					registers[num] = (byte) data;
+				}
 				break;
 				
 			case 0x4F: // FF4F - VRAM Bank - GBC only

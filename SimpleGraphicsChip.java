@@ -63,9 +63,10 @@ public class SimpleGraphicsChip extends GraphicsChip {
 		
 		colors = new int[] { 0xffffffff, 0xffaaaaaa, 0xff555555, 0xff000000};
 		gbcMask = 0xff000000;
+		transparentCutoff = cpu.gbcFeatures ? 32 : 0;
 		
 		tileImage = new Image[tileCount * colorCount];
-		imageBounds = new int[tileCount * colorCount][];
+		imageBounds = new int[tileCount][];
 		tileReadState = new boolean[tileCount];
 		
 		cpu.memory[4] = videoRam;
@@ -88,6 +89,9 @@ public class SimpleGraphicsChip extends GraphicsChip {
 
 	/** Writes data to the specified video RAM address */
 	public final void addressWrite(int addr, byte data) {
+		if (videoRam[addr] == data)
+			return;
+		
 		if (addr < 0x1800) { // Bkg Tile data area
 			int tileIndex = (addr >> 4) + tileOffset;
 			
@@ -98,6 +102,7 @@ public class SimpleGraphicsChip extends GraphicsChip {
 					tileImage[r] = null;
 					r -= tileCount;
 				} while (r >= 0);
+				imageBounds[tileIndex] = null;
 				tileReadState[tileIndex] = false;
 			}
 		}
@@ -162,7 +167,6 @@ public class SimpleGraphicsChip extends GraphicsChip {
 		}
 		
 		if (line == 0) {
-			awaitFrameDone();
 			if (!cpu.gbcFeatures) {
 				graphics.setColor(gbPalette[0]);
 				graphics.fillRect(0, 0, scaledWidth, scaledHeight);
@@ -332,7 +336,7 @@ public class SimpleGraphicsChip extends GraphicsChip {
 	 */
 	private final Image updateImage(int tileIndex, int attribs) {
 		int index = tileIndex + tileCount * attribs;
-		//solid[index] = false;
+
 		boolean otherBank = (tileIndex >= 384);
 
 		int offset = otherBank ? ((tileIndex - 384) << 4) : (tileIndex << 4);
@@ -341,39 +345,35 @@ public class SimpleGraphicsChip extends GraphicsChip {
 		
 		byte[] vram = otherBank ? videoRamBanks[1] : videoRamBanks[0];
 		int[] palette = cpu.gbcFeatures ? gbcPalette : gbPalette;
-		boolean transparentPossible = palette[paletteStart] >= 0; // i.e. if high byte of color #0 is ff, image can never be transparent
+		boolean transparentPossible = attribs >= transparentCutoff;
 		
-		int x1c, x2c, y1c, y2c;
+		int x2c, y2c, x2cstart;
+		int croppedWidth, croppedHeight;
+		int preshift = 0;
 		
-		int x1cstart, starty;		
-		int deltax, deltay;
-		
-		// set up scaling constants, for upscaling and downscaling
-		if (tileWidth > 8) {
-			x1cstart = tileWidth - 5;
-			deltax = 8;
+		if (!transparentPossible) {
+			croppedWidth = tileWidth;
+			croppedHeight = imageHeight;
+			x2cstart = 4 - tileWidth;
+			y2c = 4 - tileHeight;
+		} else if (imageBounds[tileIndex] != null) {
+			int[] bounds = imageBounds[tileIndex];
+			
+			croppedWidth = bounds[4];
+			croppedHeight = bounds[5];
+			y2c = bounds[6];
+			x2cstart = bounds[7];
+			offset += bounds[8];
+			preshift = bounds[9];
 		} else {
-			x1cstart = tileWidth - 1;
-			deltax = 9;
-		}
-		if (tileHeight > 8) {
-			starty = tileHeight - 5;
-			deltay = 8;
-		} else {
-			starty = tileHeight - 1;
-			deltay = 9;
-		}
-		
-		int[] bounds = imageBounds[index] = new int[4];
-		if (transparentPossible) {
-			// preprocess bounds (fixme: not needed if we decode the image after a palette change...)
+			int[] bounds = new int[10];
+
 			bounds[0] = tileWidth;
 			bounds[1] = imageHeight;
 
 			int preoffset = offset;
 			int mask = 0;
-			y1c = starty;
-			y2c = 0;
+			y2c = 4 - tileHeight;
 			for (int y = 0; y < imageHeight; y++) {
 				int num = vram[preoffset] | vram[preoffset + 1];
 				if (num != 0) {
@@ -383,60 +383,56 @@ public class SimpleGraphicsChip extends GraphicsChip {
 
 				mask |= num;
 				
-				y2c += deltay;
-				while (y2c > y1c) {
-					y1c += tileHeight;
+				y2c += 8;
+				while (y2c > 0) {
+					y2c -= tileHeight;
 					preoffset += 2;
 				}
 			}
-			x1c = x1cstart;
-			x2c = 0;
+			x2c = 4 - tileWidth;
 			for (int x = tileWidth; --x >= 0; ) {
 				if ((mask & 1) != 0) {
 					bounds[0] = x;
 					bounds[2] = Math.max(bounds[2], x + 1);
 				}
 
-				x2c += deltax;
-				while (x2c > x1c) {
-					x1c += tileWidth;
+				x2c += 8;
+				while (x2c > 0) {
+					x2c -= tileWidth;
 					mask >>= 1;
 				}
 			}
 			
-			if (bounds[0] >= bounds[2] || bounds[1] >= bounds[3]){
+			if (bounds[0] == tileWidth) {
 				tileImage[index] = transparentImage;
 				tileReadState[tileIndex] = true;
 				return tileImage[index];
 			}
 
-			if ((attribs & TILE_FLIPY) != 0) {
-				int temp = bounds[1];
-				bounds[1] = imageHeight - bounds[3];
-				bounds[3] = imageHeight - temp;
+			imageBounds[tileIndex] = bounds;
+			
+			bounds[2] = tileWidth - bounds[2];
+			bounds[3] = imageHeight - bounds[3];
+			bounds[4] = croppedWidth = tileWidth - bounds[2] - bounds[0];
+			bounds[5] = croppedHeight = imageHeight - bounds[3] - bounds[1];
+			
+			// precrop top/left
+			x2cstart = 4 - tileWidth + (bounds[2] << 3);
+			y2c = 4 - tileHeight + (bounds[1] << 3);
+			while (y2c > 0) {
+				y2c -= tileHeight;
+				bounds[8] += 2;
 			}
-			if ((attribs & TILE_FLIPX) != 0) {
-				int temp = bounds[0];
-				bounds[0] = tileWidth - bounds[2];
-				bounds[2] = tileWidth - temp;
+			while (x2cstart > 0) {
+				x2cstart -= tileWidth;
+				preshift += 2;
 			}
-		} else {
-			bounds[2] = tileWidth;
-			bounds[3] = imageHeight;
+			
+			bounds[6] = y2c;
+			bounds[7] = x2cstart;
+			offset += bounds[8];
+			bounds[9] = preshift;
 		}
-		
-		int croppedHeight = bounds[3] - bounds[1];
-		int croppedWidth = bounds[2] - bounds[0];
-		
-		// setup decode image
-		y1c = starty;
-		y2c = 0;
-		
-		// precrop top/left (part 1)
-		int preshift = 0;
-		int x2cstart = deltax * bounds[0];
-		// (y2c set in the if-flip-y-construct below)
-		
 		
 		// apply flips
 		int pixix = 0;
@@ -444,53 +440,37 @@ public class SimpleGraphicsChip extends GraphicsChip {
 		int pixixdy = 0;
 		
 		if ((attribs & TILE_FLIPY) != 0) {
-			pixixdy = -2*croppedWidth;
+			pixixdy = -croppedWidth << 1;
 			pixix = croppedWidth * (croppedHeight - 1);
-			y2c += deltay * (imageHeight - bounds[3]);
-		} else {
-			y2c += deltay * bounds[1];
 		}
+		
 		if ((attribs & TILE_FLIPX) == 0) {
 			pixixdx = -1;
 			pixix += croppedWidth - 1;
-			pixixdy += croppedWidth * 2;
-			x2cstart = deltax * (tileWidth - bounds[2]);
-		}
-		
-		// precrop top/left (part 2)
-		while (y2c > y1c) {
-			y1c += tileHeight;
-			offset += 2;
-		}
-		while (x2cstart > x1cstart) {
-			x1cstart += tileWidth;
-			preshift += 2;
+			pixixdy += croppedWidth << 1;
 		}
 		
 		int holemask = 0;
-		for (int y = bounds[1]; y < bounds[3]; y++) {
-			int num = weaveLookup[vram[offset] & 0xff] + (weaveLookup[vram[offset + 1] & 0xff] << 1);
+		for (int y = croppedHeight; --y >= 0; ) {
+			int num = (weaveLookup[vram[offset] & 0xff] + (weaveLookup[vram[offset + 1] & 0xff] << 1)) >> preshift;
 			
-			num >>= preshift;
-			
-			x1c = x1cstart;
 			x2c = x2cstart;
-			for (int x = bounds[2]; --x >= bounds[0]; ) {
+			for (int x = croppedWidth; --x >= 0; ) {
 				tempPix[pixix] = palette[paletteStart + (num & 3)];
 				
 				pixix += pixixdx;
 				
-				x2c += deltax;
-				while (x2c > x1c) {
-					x1c += tileWidth;
+				x2c += 8;
+				while (x2c > 0) {
+					x2c -= tileWidth;
 					num >>= 2;
 				}
 			}
 			pixix += pixixdy;
 			
-			y2c += deltay;
-			while (y2c > y1c) {
-				y1c += tileHeight;
+			y2c += 8;
+			while (y2c > 0) {
+				y2c -= tileHeight;
 				holemask |= ~(vram[offset] | vram[offset + 1]);
 				offset += 2;
 			}
@@ -498,7 +478,6 @@ public class SimpleGraphicsChip extends GraphicsChip {
 		
 		if (holemask >> (preshift >> 1) == 0) {
 			transparentPossible = false;
-	//		solid[index] = true;
 		}
 		
 		tileImage[index] = Image.createRGBImage(tempPix, croppedWidth, croppedHeight, transparentPossible);
@@ -507,7 +486,6 @@ public class SimpleGraphicsChip extends GraphicsChip {
 		
 		return tileImage[index];
 	}
-	//boolean[] solid = new boolean[50000]; 
 	
 	private final void draw(int tileIndex, int x, int y, int attribs) {
 		int ix = tileIndex + tileCount * attribs;
@@ -527,15 +505,12 @@ public class SimpleGraphicsChip extends GraphicsChip {
 			x = (x * tileWidth) >> 3;
 		}
 		
-		int[] bounds = imageBounds[ix];
-		graphics.drawImage(im, x + bounds[0], y + bounds[1], 20);
-		/*
-		if (solid[ix]) {
-			graphics.setColor(0xffff00ff);
-			graphics.drawRect(x + bounds[0], y + bounds[1],
-					bounds[2] - bounds[0] - 1, bounds[3] - bounds[1] - 1);
+		if (attribs >= transparentCutoff) {
+			int[] bounds = imageBounds[tileIndex];
+			graphics.drawImage(im, x + bounds[(attribs & 1) << 1], y + bounds[1 + (attribs & 2)], 20);
+		} else {
+			graphics.drawImage(im, x, y, 20);
 		}
-		*/
 	}
 	
 	public final void stopWindowFromLine() {
@@ -568,8 +543,10 @@ public class SimpleGraphicsChip extends GraphicsChip {
 			for (int r = 0; r < tileImage.length; r++)
 				tileImage[r] = null;
 			
-			for (int r = 0; r < tileReadState.length; r++)
+			for (int r = 0; r < tileReadState.length; r++) {
 				tileReadState[r] = false;
+				imageBounds[r] = null;
+			}
 		}
 		
 		imageHeight = tileHeight;

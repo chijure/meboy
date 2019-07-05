@@ -14,6 +14,25 @@ Credits
 MeBoy Change Log
 -
 
+version 2.2: 1 Feb 2009
+-
+
+* Improved speed of writes to graphics memory
+* Improved screen redraw syncing, especially for Advanced Graphics mode
+* Improved speed of doubled sprites (8x16 pixel) by drawing one large image instead of two small
+* Improved speed of decoding images in Advanced Graphics mode
+* Tweaked the sprite drawing loop to be slightly faster and better reflect the order sprites should be drawn, especially in Gameboy Color games
+* Simple Graphics mode now crops images that have transparent borders
+* Simple Graphics detects solid images, and creates Images without alpha channel
+* Tweaked decoding of images when scaling the screen to 75%
+* Fixed flicker when the LCD screen was turned off
+* Fixed bug when decoding Gameboy Color palettes (Pokemon trading card game starts now)
+* Fixed HDMA bug when interrupts are disabled (Donkey Kong Country starts now)
+* Fixed speed-switch bug where read-only bits could be written to (Conker's Pocket Tales starts now)
+* Tweaked handling of cart-RAM (hopefully improving compatibility, but it's hard to tell)
+* Emulation is now paused when setting keys
+
+
 version 2.1: 6 Dec 2008
 -
 

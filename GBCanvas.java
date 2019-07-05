@@ -2,7 +2,7 @@
 
 MeBoy
 
-Copyright 2005-2008 Bjorn Carlin
+Copyright 2005-2009 Bjorn Carlin
 http://www.arktos.se/
 
 Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria
@@ -216,6 +216,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 				MeBoy.showFps = !MeBoy.showFps;
 				setDimensions();
 			} else if (label == MeBoy.literal[35] && !settingKeys) {
+				pause();
 				settingKeys = true;
 				keySetCounter = 0;
 			} else if (label == MeBoy.literal[32] && !settingKeys) {
@@ -272,8 +273,8 @@ public class GBCanvas extends Canvas implements CommandListener {
 		
 		int now = (int) System.currentTimeMillis();
 		// calculate moving-average fps
-		// 17 ms * 60 fps * 2*16 seconds = 16320 ms
-		int estfps = ((16320*2 + now - previousTime[previousTimeIx]) / (now - previousTime[previousTimeIx])) >> 1;
+		// 17 ms * 60 fps * 2*16 seconds = 32640 ms
+		int estfps = ((32640 + now - previousTime[previousTimeIx]) / (now - previousTime[previousTimeIx])) >> 1;
 		previousTime[previousTimeIx] = now;
 		previousTimeIx = (previousTimeIx + 1) & 0x0F;
 		

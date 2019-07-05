@@ -1,4 +1,4 @@
-Novo Jogo
+Iniciar Jogo
 Continuar Jogo
 Opções
 Mostrar Log

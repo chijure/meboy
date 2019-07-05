@@ -2,7 +2,7 @@
 
 MeBoy
 
-Copyright 2005-2008 Bjorn Carlin
+Copyright 2005-2009 Bjorn Carlin
 http://www.arktos.se/
 
 Based on JavaBoy, COPYRIGHT (C) 2001 Neil Millstone and The Victoria

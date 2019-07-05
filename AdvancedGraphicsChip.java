@@ -48,6 +48,7 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 		
 		colors = new int[] { 0x80F8F8F8, 0x80A8A8A8, 0x80505050, 0x80000000};
 		gbcMask = 0x80000000;
+		transparentCutoff = cpu.gbcFeatures ? 32 : 4;
 		
 		tileImage = new int[tileCount * colorCount][];
 		tileReadState = new boolean[tileCount];
@@ -57,6 +58,9 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 	
 	/** Writes data to the specified video RAM address */
 	public final void addressWrite(int addr, byte data) {
+		if (videoRam[addr] == data)
+			return;
+		
 		if (addr < 0x1800) { // Bkg Tile data area
 			int tileIndex = (addr >> 4) + tileOffset;
 			
@@ -236,7 +240,6 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 		}
 
 		if (line == 0) {
-			awaitFrameDone();
 			windowSourceLine = 0;
 		}
 		
@@ -275,8 +278,10 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 
 	protected final void updateFrameBufferImage() {
 		if (!lcdEnabled) {
-			frameBufferImage = Image.createRGBImage(new int[scaledWidth * scaledHeight],
-					scaledWidth, scaledHeight, false);
+			int[] buffer = scale ? scaledBuffer : frameBuffer;
+			for (int i = 0; i < buffer.length; i++)
+				buffer[i] = -1;
+			frameBufferImage = Image.createRGBImage(buffer, scaledWidth, scaledHeight, false);
 			return;
 		}
 		
@@ -428,13 +433,7 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 		
 		byte[] vram = otherBank ? videoRamBanks[1] : videoRamBanks[0];
 		int[] palette = cpu.gbcFeatures ? gbcPalette : gbPalette;
-		boolean transparent;
-
-		if (cpu.gbcFeatures) {
-			transparent = (paletteStart >= 0x40); // background can not be transparent, only sprites
-		} else {
-			transparent = paletteStart > 0; // background can not be transparent, only obj1 and 2
-		}
+		boolean transparent = attribs >= transparentCutoff;
 		
 		int pixix = 0;
 		int pixixdx = 1;
@@ -450,34 +449,19 @@ public class AdvancedGraphicsChip extends GraphicsChip {
 			pixixdy += 8 * 2;
 		}
 		
-		int x1c, x2c, y1c, y2c;
-		
-		y1c = 8 >> 1;
-		y2c = 0;
-		for (int y = 0; y < 8; y++) {
-			int num = weaveLookup[vram[offset] & 0xff] + (weaveLookup[vram[offset + 1] & 0xff] << 1);
+		for (int y = 8; --y >= 0; ) {
+			int num = weaveLookup[vram[offset++] & 0xff] +
+					 (weaveLookup[vram[offset++] & 0xff] << 1);
 			if (num != 0)
 				transparent = false;
 			
-			x1c = 8 >> 1;
-			x2c = 0;
 			for (int x = 8; --x >= 0; ) {
 				tempPix[pixix] = palette[paletteStart + (num & 3)];
 				pixix += pixixdx;
 				
-				x2c += 8;
-				while (x2c > x1c) {
-					x1c += 8;
-					num >>= 2;
-				}
+				num >>= 2;
 			}
 			pixix += pixixdy;
-			
-			y2c += 8;
-			while (y2c > y1c) {
-				y1c += 8;
-				offset += 2;
-			}
 		}
 		
 		if (transparent) {

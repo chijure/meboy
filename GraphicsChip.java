@@ -30,7 +30,7 @@ import javax.microedition.lcdui.*;
 
 
 public abstract class GraphicsChip {
-	protected final int MS_PER_FRAME = 4;
+	protected final int MS_PER_FRAME = 17;
 
 	/** Tile is flipped horizontally */
 	protected final int TILE_FLIPX = 1; // 0x20 in oam attributes
@@ -49,6 +49,7 @@ public abstract class GraphicsChip {
 	protected int[] gbcRawPalette = new int[128];
 	protected int[] gbcPalette = new int[64];
 	protected int gbcMask; // 0xff000000 for simple, 0x80000000 for advanced
+	protected int transparentCutoff; // min "attrib" value where transparency can occur
 	
 	boolean bgEnabled = true;
 	boolean winEnabled = true;
@@ -241,7 +242,8 @@ public abstract class GraphicsChip {
 		}
 		
 		lastSkipCount = skipCount;
-		repaint();
+		frameDone = false;
+		cpu.screen.redrawSmall();
 		
 		int now = (int) System.currentTimeMillis();
 		
@@ -260,6 +262,9 @@ public abstract class GraphicsChip {
 			// e.printStackTrace();
 		}
 		
+		while (!frameDone && !cpu.terminate) {
+			Thread.yield();
+		}
 		skipCount = 0;
 	}
 
@@ -297,17 +302,6 @@ public abstract class GraphicsChip {
 		cpu.memory[4] = videoRam;
 	}
 	
-	public final void repaint() {
-		frameDone = false;
-		cpu.screen.redrawSmall();
-	}
-	
-	protected final void awaitFrameDone() {
-		while (!frameDone && !cpu.terminate) {
-			Thread.yield();
-		}
-	}
-
 	public final void notifyRepainted() {
 		frameDone = true;
 	}
