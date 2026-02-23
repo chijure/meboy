@@ -354,8 +354,15 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 		if (fileAndDisplayName.endsWith(".zip")) {
 			ZipInputStream zin = new ZipInputStream(new FileInputStream(f));
 			fi = zin;
-			// replace the name with the name of the first zipped file
-			fileAndDisplayName = zin.getNextEntry().getName();
+			// Replace the name with the first file-like entry in the zip.
+			ZipEntry entry = zin.getNextEntry();
+			while (entry != null && entry.isDirectory()) {
+				entry = zin.getNextEntry();
+			}
+			if (entry == null) {
+				throw new IOException("ZIP file does not contain a ROM file.");
+			}
+			fileAndDisplayName = entry.getName();
 		} else {
 			// normal, non-zipped file
 			fi = new FileInputStream(f);
@@ -379,34 +386,43 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 
 		// do sanity check
 		boolean sane = true;
+		int headerOffset = 0;
 
 		if (buffer.length < 0x200 || buffer.length < f.length()) {
-			error = uncleanName + " does not seem to be a valid ROM file, and it will not added.";
+			error = uncleanName + " does not seem to be a valid ROM file, and it will not be added.";
 			System.out.println("length: " + buffer.length);
 			sane = false;
 		}
 
 		// sanity check the cartridge file
-		int cartSize = sane ? lookUpCartSize(buffer[0x0148] & 0xff) : -1;
-		if (sane && (cartSize == -1 || (buffer[0x0104] != (byte) 0xCE)
-				|| (buffer[0x010d] != (byte) 0x73) || (buffer[0x0118] != (byte) 0x88))) {
-			error = uncleanName + " does not seem to be a valid ROM file, and it will not added.";
+		if (sane) {
+			if (!hasValidHeaderAt(buffer, 0) && hasValidHeaderAt(buffer, 512)) {
+				// Some old ROM dumps include a 512-byte copier header.
+				headerOffset = 512;
+			}
+		}
+
+		int cartSize = sane ? lookUpCartSize(buffer[headerOffset + 0x0148] & 0xff) : -1;
+		if (sane && (cartSize == -1 || !hasValidHeaderAt(buffer, headerOffset))) {
+			error = uncleanName + " does not seem to be a valid ROM file, and it will not be added.";
 			System.out.println("cartSize " + cartSize);
-			System.out.println("104 " + buffer[0x0104]);
-			System.out.println("10d " + buffer[0x010d]);
-			System.out.println("118 " + buffer[0x0118]);
-			System.out.println("148 " + buffer[0x0148]);
+			System.out.println("104 " + buffer[headerOffset + 0x0104]);
+			System.out.println("10d " + buffer[headerOffset + 0x010d]);
+			System.out.println("118 " + buffer[headerOffset + 0x0118]);
+			System.out.println("148 " + buffer[headerOffset + 0x0148]);
 			sane = false;
 
 			if (uncleanName.endsWith(".gba"))
 				error += " Please note that MeBoy does not emulate the Gameboy Advance.";
 			if (uncleanName.endsWith(".nds"))
 				error += " Please note that MeBoy does not emulate the Nintendo DS.";
+			if (uncleanName.endsWith(".zip"))
+				error += " If this is a ZIP, ensure it contains a single GB/GBC ROM file.";
 		}
 
 		String identifier = "";
 		if (sane) {
-			for (int i = 0x134; i < 0x143; i++)
+			for (int i = headerOffset + 0x134; i < headerOffset + 0x143; i++)
 				if (buffer[i] >= 31 && buffer[i] < 128)
 					identifier = identifier + (char) buffer[i];
 			if (findByCartID(identifier) != null) {
@@ -428,6 +444,15 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 			JOptionPane.showMessageDialog(null, string2JTA(error), "MeBoyBuilder warning",
 					JOptionPane.WARNING_MESSAGE, icon[DEFAULT_ICON_INDEX]);
 		}
+	}
+
+	private boolean hasValidHeaderAt(byte[] buffer, int offset) {
+		if (buffer.length <= offset + 0x148) {
+			return false;
+		}
+		return (buffer[offset + 0x0104] == (byte) 0xCE)
+				&& (buffer[offset + 0x010d] == (byte) 0x73)
+				&& (buffer[offset + 0x0118] == (byte) 0x88);
 	}
 
 	private void createJar() throws IOException {
@@ -492,7 +517,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 				"SimpleGraphicsChip.class",
 				"lang/index.txt", "lang/0.txt"};
 		for (String copyName : files) {
-			InputStream tis = ClassLoader.getSystemClassLoader().getResourceAsStream(copyName);
+			InputStream tis = openResourceOrFile(copyName);
 
 			if (tis == null) {
 				fatalException(new IOException("The file " + copyName + " could not be copied to "
@@ -512,7 +537,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 		// optional files (lang):
 		for (int i = 1; i < 25; i++) {
 			String copyName = "lang/" + i + ".txt";
-			InputStream tis = ClassLoader.getSystemClassLoader().getResourceAsStream(copyName);
+			InputStream tis = openResourceOrFile(copyName);
 
 			if (tis == null) {
 				continue;
@@ -577,6 +602,18 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 				+ ".jar, you do not need " + midletName + ".jad and can safely throw it away.\n"
 				+ "- If your phone requires a \".jad\" file, transfer " + midletName
 				+ ".jad instead."), "MeBoyBuilder Finished", JOptionPane.INFORMATION_MESSAGE, icon[DEFAULT_ICON_INDEX]);
+	}
+
+	private InputStream openResourceOrFile(String name) throws IOException {
+		InputStream resource = ClassLoader.getSystemClassLoader().getResourceAsStream(name);
+		if (resource != null) {
+			return resource;
+		}
+		File file = new File(name);
+		if (file.exists() && file.isFile()) {
+			return new FileInputStream(file);
+		}
+		return null;
 	}
 	
 	private static void fatalException(Exception ex) {

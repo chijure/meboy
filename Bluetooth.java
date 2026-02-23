@@ -35,7 +35,7 @@ import javax.microedition.rms.*;
 
 
 public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
-	private static final UUID MeBoyUUID = new UUID("ceb15f4a19eb4db28d1c40eb0f091607", false);
+	private static final javax.bluetooth.UUID MeBoyUUID = new javax.bluetooth.UUID("ceb15f4a19eb4db28d1c40eb0f091607", false);
 	private MeBoy parent;
 	private String connectionURL;
 	private String savegameDisplayName;
@@ -50,17 +50,17 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 	private boolean discoveryAgentIsScanning;
 	private int discoveryAgentId;
 	// 0x1101 is the UUID for the Serial Port Profile
-	private UUID[] uuidSet = {new UUID(0x1101)};	// 0x0100 is the attribute for the service name element
+	private javax.bluetooth.UUID[] uuidSet = {new javax.bluetooth.UUID(0x1101)};	// 0x0100 is the attribute for the service name element
 	// in the service record
 	private int[] attrSet = {0x0100};
 
 	// UI
 	private Form waitForm;
-	private List mainList;
+	private javax.microedition.lcdui.List mainList;
 	private Form receiveForm;
-	private List savegameList;
-	private List suspendgameList;
-	private List deviceList;
+	private javax.microedition.lcdui.List savegameList;
+	private javax.microedition.lcdui.List suspendgameList;
+	private javax.microedition.lcdui.List deviceList;
 	private Gauge gauge;
 	
 	private Vector savegameCartIDs;
@@ -120,7 +120,7 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 
 			// check, if one of the service's class IDs matches the application's UUID
 			while (serviceIDs.hasMoreElements()) {
-				UUID serviceID = (UUID) (((DataElement) serviceIDs.nextElement()).getValue());
+				javax.bluetooth.UUID serviceID = (javax.bluetooth.UUID) (((DataElement) serviceIDs.nextElement()).getValue());
 				if (!serviceID.equals(MeBoyUUID))
 					continue;
 				
@@ -178,7 +178,7 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 	}
 
 	private void showMain() {
-		mainList = new List(MeBoy.literal[4], List.IMPLICIT);
+		mainList = new javax.microedition.lcdui.List(MeBoy.literal[4], javax.microedition.lcdui.List.IMPLICIT);
 		mainList.append(MeBoy.literal[52], null);
 		if (parent.suspendName20.length > 0)
 			mainList.append(MeBoy.literal[54], null);
@@ -205,7 +205,7 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 	}
 
 	private void showSavegameSelect() {
-		savegameList = new List(MeBoy.literal[53], List.IMPLICIT);
+		savegameList = new javax.microedition.lcdui.List(MeBoy.literal[53], javax.microedition.lcdui.List.IMPLICIT);
 		savegameCartIDs = new Vector();
 		savegameFilenames = new Vector();
 		parent.addSavegamesToList(savegameList, savegameCartIDs, savegameFilenames);
@@ -270,7 +270,7 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 	}
 
 	private void showSuspendGameSelect() {
-		suspendgameList = new List(MeBoy.literal[55], List.IMPLICIT);
+		suspendgameList = new javax.microedition.lcdui.List(MeBoy.literal[55], javax.microedition.lcdui.List.IMPLICIT);
 		
 		for (int i = 0; i < parent.suspendName20.length; i++) {
 			suspendgameList.append(parent.suspendName20[i], null);
@@ -314,7 +314,7 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 		try {
 			// the discovery process was a success
 			// so let's out them in a List and display it to the user
-			deviceList = new List(MeBoy.literal[70], List.IMPLICIT);
+			deviceList = new javax.microedition.lcdui.List(MeBoy.literal[70], javax.microedition.lcdui.List.IMPLICIT);
 			for (int i = 0; i < remoteDevices.size(); i++) {
 				String device;
 				try {
@@ -577,7 +577,7 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 						return r;
 					}
 				} else if (DataElement.UUID == d.getDataType()) {
-					if (d.getValue().equals(new UUID(0x0003))) {
+					if (d.getValue().equals(new javax.bluetooth.UUID(0x0003))) {
 						DataElement channelRFCOMM = (DataElement) e.nextElement();
 						if (DataElement.U_INT_8 == channelRFCOMM.getDataType() ||
 								DataElement.U_INT_16 == channelRFCOMM.getDataType() ||

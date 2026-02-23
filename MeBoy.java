@@ -73,11 +73,11 @@ public class MeBoy extends MIDlet implements CommandListener {
 	
 	// UI components
 	public static Display display;
-	private List mainMenu;
+	private javax.microedition.lcdui.List mainMenu;
 	private Form messageForm;
 	private GBCanvas gbCanvas;
-	private List cartList;
-	private List suspendList;
+	private javax.microedition.lcdui.List cartList;
+	private javax.microedition.lcdui.List suspendList;
 	
 	// Settings
 	private Form settingsForm;
@@ -452,7 +452,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 	}
 
 	private void showMainMenu() {
-		mainMenu = new List("MeBoy 2.2", List.IMPLICIT);
+		mainMenu = new javax.microedition.lcdui.List("MeBoy 2.2", javax.microedition.lcdui.List.IMPLICIT);
 		mainMenu.append(literal[0], null);
 		if (suspendName20.length > 0) {
 			mainMenu.append(literal[1], null);
@@ -494,7 +494,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 	}
 
 	private void showCartList() {
-		cartList = new List(literal[7], List.IMPLICIT);
+		cartList = new javax.microedition.lcdui.List(literal[7], javax.microedition.lcdui.List.IMPLICIT);
 		
 		for (int i = 0; i < numCarts; i++)
 			cartList.append(cartDisplayName[i], null);
@@ -528,7 +528,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 			showMainMenu();
 			return;
 		}
-		suspendList = new List(literal[7], List.IMPLICIT);
+		suspendList = new javax.microedition.lcdui.List(literal[7], javax.microedition.lcdui.List.IMPLICIT);
 
 		for (int i = 0; i < suspendName20.length; i++) {
 			suspendList.append(suspendName20[i], null);
@@ -693,7 +693,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 		showMainMenu();
 	}
 	
-	public void addSavegamesToList(List list, Vector cartIDs, Vector filenames) {
+	public void addSavegamesToList(javax.microedition.lcdui.List list, Vector cartIDs, Vector filenames) {
 		for (int i = 0; i < numCarts; i++) {
 			try {
 				RecordStore rs = RecordStore.openRecordStore("20R_" + cartID[i], true);
