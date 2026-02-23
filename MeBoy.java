@@ -28,6 +28,8 @@ Place - Suite 330, Boston, MA 02111-1307, USA.
 
 import java.io.*;
 import java.util.*;
+import javax.microedition.io.*;
+import javax.microedition.io.file.*;
 import javax.microedition.lcdui.*;
 import javax.microedition.midlet.*;
 import javax.microedition.rms.*;
@@ -62,11 +64,18 @@ public class MeBoy extends MIDlet implements CommandListener {
 	private static int languageCount = 1;
 	private static String[] languages = new String[] {"English"}; // if index.txt fails
 	private static int[] languageLookup = new int[] {0};
+	private static final String LOAD_SD_LABEL = "Load ROM from SD";
+	private static final String BACK_DIR_LABEL = "..";
+	private static final Hashtable externalRoms = new Hashtable();
 	private String[] cartDisplayName = null;
 	private String[] cartFileName = null;
 	private String[] cartID = null;
 	private int numCarts;
 	private boolean fatalError;
+	private boolean fileSystemAvailable = false;
+	private javax.microedition.lcdui.List fileBrowserList;
+	private String currentBrowserPath = "file:///";
+	private final Vector browserEntries = new Vector();
 	
 	public static String logString = "";
 	private static MeBoy instance;
@@ -101,6 +110,11 @@ public class MeBoy extends MIDlet implements CommandListener {
 		try {
 			bluetoothAvailable = Bluetooth.available();
 		} catch (NoClassDefFoundError t) {
+		}
+		try {
+			fileSystemAvailable = FileSystemRegistry.listRoots() != null;
+		} catch (Throwable t) {
+			fileSystemAvailable = false;
 		}
 		
 		instance = this;
@@ -205,9 +219,11 @@ public class MeBoy extends MIDlet implements CommandListener {
 			}
 			is.close();
 		} catch (Exception e) {
-			fatalError = true;
-			showError(literal[51], null, e);
-			return false;
+			numCarts = 0;
+			cartDisplayName = new String[0];
+			cartFileName = new String[0];
+			cartID = new String[0];
+			log("No bundled carts were found in the JAR.");
 		}
 		return true;
 	}
@@ -452,8 +468,13 @@ public class MeBoy extends MIDlet implements CommandListener {
 	}
 
 	private void showMainMenu() {
-		mainMenu = new javax.microedition.lcdui.List("MeBoy 2.2", javax.microedition.lcdui.List.IMPLICIT);
-		mainMenu.append(literal[0], null);
+		mainMenu = new javax.microedition.lcdui.List("MeBoy 2.3", javax.microedition.lcdui.List.IMPLICIT);
+		if (numCarts > 0) {
+			mainMenu.append(literal[0], null);
+		}
+		if (fileSystemAvailable) {
+			mainMenu.append(LOAD_SD_LABEL, null);
+		}
 		if (suspendName20.length > 0) {
 			mainMenu.append(literal[1], null);
 		}
@@ -478,10 +499,12 @@ public class MeBoy extends MIDlet implements CommandListener {
 			showResumeGame();
 		} else if (item == literal[2]) {
 			showSettings();
+		} else if (LOAD_SD_LABEL.equals(item)) {
+			showFileBrowser("file:///");
 		} else if (item == literal[4]) {
 			bluetooth = new Bluetooth(this);
 		} else if (item == literal[5]) {
-			showMessage(literal[5], "MeBoy 2.2 © Björn Carlin, 2005-2009.\nhttp://arktos.se/meboy/");
+			showMessage(literal[5], "MeBoy 2.3 © Björn Carlin, 2005-2009.\nhttp://arktos.se/meboy/");
 		} else if (item == literal[3]) {
 			log(literal[29] + " " + Runtime.getRuntime().freeMemory() + "/" + Runtime.getRuntime().totalMemory());
 			showLog();
@@ -494,6 +517,10 @@ public class MeBoy extends MIDlet implements CommandListener {
 	}
 
 	private void showCartList() {
+		if (numCarts == 0) {
+			showMessage("MeBoy", "No bundled ROMs found. Use \"" + LOAD_SD_LABEL + "\" from the main menu.");
+			return;
+		}
 		cartList = new javax.microedition.lcdui.List(literal[7], javax.microedition.lcdui.List.IMPLICIT);
 		
 		for (int i = 0; i < numCarts; i++)
@@ -813,6 +840,174 @@ public class MeBoy extends MIDlet implements CommandListener {
 			}
 		}
 	}
+
+	private void showFileBrowser(String path) {
+		currentBrowserPath = normalizeDirectoryPath(path);
+		fileBrowserList = new javax.microedition.lcdui.List("Select ROM", javax.microedition.lcdui.List.IMPLICIT);
+		fileBrowserList.addCommand(new Command(literal[10], Command.BACK, 1));
+		fileBrowserList.setCommandListener(this);
+		browserEntries.removeAllElements();
+
+		try {
+			if (!"file:///".equals(currentBrowserPath)) {
+				fileBrowserList.append(BACK_DIR_LABEL, null);
+				browserEntries.addElement(BACK_DIR_LABEL);
+			}
+
+			if ("file:///".equals(currentBrowserPath)) {
+				Enumeration roots = FileSystemRegistry.listRoots();
+				while (roots.hasMoreElements()) {
+					String root = (String) roots.nextElement();
+					String url = normalizeDirectoryPath("file:///" + root);
+					fileBrowserList.append(root, null);
+					browserEntries.addElement(url);
+				}
+			} else {
+				FileConnection dir = (FileConnection) Connector.open(currentBrowserPath, Connector.READ);
+				try {
+					if (!dir.exists() || !dir.isDirectory()) {
+						throw new IOException("Invalid directory: " + currentBrowserPath);
+					}
+
+					Vector dirs = new Vector();
+					Vector files = new Vector();
+					Enumeration entries = dir.list();
+					while (entries.hasMoreElements()) {
+						String entry = (String) entries.nextElement();
+						String full = currentBrowserPath + entry;
+						if (entry.endsWith("/")) {
+							dirs.addElement(full);
+						} else if (isRomFile(entry)) {
+							files.addElement(full);
+						}
+					}
+
+					for (int i = 0; i < dirs.size(); i++) {
+						String full = (String) dirs.elementAt(i);
+						fileBrowserList.append(full.substring(currentBrowserPath.length()), null);
+						browserEntries.addElement(full);
+					}
+					for (int i = 0; i < files.size(); i++) {
+						String full = (String) files.elementAt(i);
+						fileBrowserList.append(full.substring(currentBrowserPath.length()), null);
+						browserEntries.addElement(full);
+					}
+				} finally {
+					dir.close();
+				}
+			}
+
+			display.setCurrent(fileBrowserList);
+		} catch (Exception e) {
+			showError("Could not open file browser.", currentBrowserPath, e);
+			showMainMenu();
+		}
+	}
+
+	private void fileBrowserCommand(Command com) {
+		if (com.getCommandType() == Command.BACK) {
+			fileBrowserList = null;
+			showMainMenu();
+			return;
+		}
+
+		int index = fileBrowserList.getSelectedIndex();
+		if (index < 0 || index >= browserEntries.size()) {
+			return;
+		}
+		String selected = (String) browserEntries.elementAt(index);
+		if (BACK_DIR_LABEL.equals(selected)) {
+			showFileBrowser(parentDirectory(currentBrowserPath));
+			return;
+		}
+		if (selected.endsWith("/")) {
+			showFileBrowser(selected);
+			return;
+		}
+
+		loadRomFromFile(selected);
+	}
+
+	private void loadRomFromFile(String fileUrl) {
+		try {
+			FileConnection fc = (FileConnection) Connector.open(fileUrl, Connector.READ);
+			byte[] romData;
+			String displayName;
+			try {
+				if (!fc.exists() || fc.isDirectory()) {
+					throw new IOException("Not a ROM file.");
+				}
+				displayName = fc.getName();
+				InputStream is = fc.openInputStream();
+				try {
+					romData = readAll(is);
+				} finally {
+					is.close();
+				}
+			} finally {
+				fc.close();
+			}
+
+			if (romData.length < 0x200) {
+				throw new IOException("ROM file too small.");
+			}
+
+			String externalCartID = buildExternalCartID(fileUrl);
+			registerExternalRom(externalCartID, romData);
+
+			gbCanvas = new GBCanvas(externalCartID, this, displayName);
+			fileBrowserList = null;
+			display.setCurrent(gbCanvas);
+		} catch (Exception e) {
+			showError("Could not load ROM from storage.", fileUrl, e);
+		}
+	}
+
+	private static String normalizeDirectoryPath(String path) {
+		if (path == null || path.length() == 0) {
+			return "file:///";
+		}
+		if (!path.endsWith("/")) {
+			return path + "/";
+		}
+		return path;
+	}
+
+	private static String parentDirectory(String path) {
+		path = normalizeDirectoryPath(path);
+		if ("file:///".equals(path)) {
+			return path;
+		}
+		String trimmed = path.substring(0, path.length() - 1);
+		int cut = trimmed.lastIndexOf('/');
+		if (cut <= "file://".length()) {
+			return "file:///";
+		}
+		return trimmed.substring(0, cut + 1);
+	}
+
+	private static boolean isRomFile(String name) {
+		String lower = name.toLowerCase();
+		return lower.endsWith(".gb") || lower.endsWith(".gbc") || lower.endsWith(".cgb");
+	}
+
+	private static String buildExternalCartID(String fileUrl) {
+		int hash = fileUrl.hashCode();
+		if (hash < 0) {
+			hash = -hash;
+		}
+		return "ext_" + hash;
+	}
+
+	private static byte[] readAll(InputStream is) throws IOException {
+		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		byte[] buffer = new byte[4096];
+		int read;
+		while ((read = is.read(buffer)) > 0) {
+			out.write(buffer, 0, read);
+		}
+		return out.toByteArray();
+	}
 	
 	public void commandAction(Command com, Displayable s) {
 		if (s == messageForm)
@@ -825,6 +1020,8 @@ public class MeBoy extends MIDlet implements CommandListener {
 			resumeGameCommand(com);
 		else if (s == settingsForm)
 			settingsCommand(com);
+		else if (s == fileBrowserList)
+			fileBrowserCommand(com);
 	}
 
 	public static void log(String s) {
@@ -861,6 +1058,17 @@ public class MeBoy extends MIDlet implements CommandListener {
 		System.arraycopy(oldIndex, 0, suspendName20, 0, oldIndex.length);
 		suspendName20[oldIndex.length] = name;
 		GBCanvas.writeSettings();
+	}
+
+	public static void registerExternalRom(String cartName, byte[] romData) {
+		if (cartName == null || romData == null) {
+			return;
+		}
+		externalRoms.put(cartName, romData);
+	}
+
+	public static byte[] getExternalRom(String cartName) {
+		return (byte[]) externalRoms.get(cartName);
 	}
 	
 	private int findMatch(String match, String[] list, boolean fuzzy) {

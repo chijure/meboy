@@ -52,7 +52,7 @@ import javax.swing.filechooser.FileFilter;
  * carts file.
  */
 public class MeBoyBuilder implements ActionListener, ListSelectionListener, WindowListener {
-	private static final String APP_TITLE = "MeBoyBuilder 2.1";
+	private static final String APP_TITLE = "MeBoyBuilder 2.3";
 	private static final int DEFAULT_ICON_INDEX = 2;
 	private static final int CUSTOM_ICON_INDEX = 3;
 	private static final int ICON_MIN_SIZE = 16;
@@ -193,7 +193,8 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 	public void valueChanged(ListSelectionEvent e) {
 		removeGame.setEnabled(list.getSelectedValue() != null);
 		renameGame.setEnabled(list.getSelectedValue() != null);
-		createJar.setEnabled(list.getModel().getSize() > 0);
+		// Allow creating a MeBoy.jar with no bundled games.
+		createJar.setEnabled(true);
 	}
 
 	public void windowClosing(WindowEvent e) {
@@ -573,10 +574,11 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 		pw.write("MIDlet-1: " + midletName + ", meboy.png, MeBoy\n");
 		pw.write("MIDlet-Name: " + midletName + "\n");
 		pw.write("MIDlet-Vendor: Bjorn Carlin, www.arktos.se\n");
-		pw.write("MIDlet-Version: 2.1.0\n");
+		pw.write("MIDlet-Version: 2.3.0\n");
 		pw.write("MIDlet-Description: Gameboy emulator for J2ME\n");
 		pw.write("MicroEdition-Configuration: CLDC-1.1\n");
 		pw.write("MicroEdition-Profile: MIDP-2.0\n");
+		pw.write("MIDlet-Permissions-Opt: javax.microedition.io.Connector.file.read, javax.microedition.io.Connector.file.write\n");
 		pw.flush();
 		zo.close();
 
@@ -585,10 +587,11 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 		pw.write("MIDlet-1: " + midletName + ", meboy.png, MeBoy\n");
 		pw.write("MIDlet-Name: " + midletName + "\n");
 		pw.write("MIDlet-Vendor: Bjorn Carlin, www.arktos.se\n");
-		pw.write("MIDlet-Version: 2.1.0\n");
+		pw.write("MIDlet-Version: 2.3.0\n");
 		pw.write("MIDlet-Description: Gameboy emulator for J2ME\n");
 		pw.write("MicroEdition-Configuration: CLDC-1.1\n");
 		pw.write("MicroEdition-Profile: MIDP-2.0\n");
+		pw.write("MIDlet-Permissions-Opt: javax.microedition.io.Connector.file.read, javax.microedition.io.Connector.file.write\n");
 		pw.write("MIDlet-Jar-URL: " + midletName + ".jar\n");
 		pw.write("MIDlet-Jar-Size: " + f.length() + '\n');
 		pw.close();

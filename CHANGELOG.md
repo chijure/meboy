@@ -1,5 +1,14 @@
 # Changelog
 
+## version 2.3: 23 Feb 2026
+
+- Added `Load ROM from SD` support using JSR-75 file browsing (`.gb/.gbc/.cgb`).
+- Added runtime loading of external ROM data (no bundled carts required in the JAR).
+- Allowed creating `MeBoy.jar` from MeBoyBuilder even when no games are bundled.
+- Added optional file read/write permissions for JSR-75 in generated manifest and JAD.
+- Improved ROM validation handling in MeBoyBuilder (ZIP entry selection, copier-header tolerant checks, clearer error messages).
+- Updated visible app versions to MeBoy 2.3 and MeBoyBuilder 2.3.
+
 ## version 2.2: 1 Feb 2009
 
 - Improved speed of writes to graphics memory

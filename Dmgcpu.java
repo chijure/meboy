@@ -2492,6 +2492,12 @@ public class Dmgcpu implements Runnable {
 	/** Create a cartridge object, loading ROM and any associated battery RAM from the cartridge
 		*  filename given. */
 	private final void initCartridge() {
+		byte[] externalRom = MeBoy.getExternalRom(cartName);
+		if (externalRom != null) {
+			initCartridgeFromBytes(externalRom);
+			return;
+		}
+
 		java.io.InputStream is = getClass().getResourceAsStream(cartName + '0');
 		if (is == null) {
 			throw new RuntimeException(MeBoy.literal[49] + " (" + cartName + ")");
@@ -2569,6 +2575,80 @@ public class Dmgcpu implements Runnable {
 				ex.printStackTrace();
 			throw new RuntimeException(MeBoy.literal[49] + " (" + cartName + ", " + ex + ")");
 		}
+	}
+
+	private final void initCartridgeFromBytes(byte[] romData) {
+		try {
+			int headerOffset = 0;
+			if (!hasValidHeaderAt(romData, 0) && hasValidHeaderAt(romData, 512)) {
+				headerOffset = 512; // copier header
+			}
+
+			if (romData.length - headerOffset < 0x4000) {
+				throw new RuntimeException("ROM too small: " + (romData.length - headerOffset));
+			}
+
+			cartType = romData[headerOffset + 0x0147] & 0xff;
+			int numRomBanks = lookUpCartSize(romData[headerOffset + 0x0148] & 0xff);
+			if (numRomBanks <= 0) {
+				numRomBanks = Math.max(2, (romData.length - headerOffset + 0x3fff) / 0x4000);
+			}
+
+			gbcFeatures = ((romData[headerOffset + 0x143] & 0x80) == 0x80) && !MeBoy.disableColor;
+
+			if (gbcFeatures) {
+				mainRam = new byte[0x8000];
+			} else {
+				mainRam = new byte[0x2000];
+			}
+			gbcRamBank = 1;
+
+			rom = new byte[numRomBanks * 2][0x2000];
+			int sourceOffset = headerOffset;
+			for (int i = 0; i < rom.length; i++) {
+				int copy = 0x2000;
+				if (sourceOffset + copy > romData.length) {
+					copy = Math.max(0, romData.length - sourceOffset);
+				}
+				if (copy > 0) {
+					System.arraycopy(romData, sourceOffset, rom[i], 0, copy);
+					sourceOffset += copy;
+				}
+			}
+			loadedRomBanks = rom.length >> 1;
+
+			memory[0] = rom[0];
+			memory[1] = rom[1];
+			romTouch = new int[rom.length >> 1];
+			mapRom(1);
+
+			int numRamBanks = getNumRAMBanks();
+			if (numRamBanks == 0) {
+				numRamBanks = 1;
+			}
+			cartRam = new byte[numRamBanks][0x2000];
+			memory[5] = cartRam[0];
+
+			lastRtcUpdate = (int) System.currentTimeMillis();
+
+			MeBoy.log("Loaded external ROM '" + cartName + "' (" + (numRomBanks * 16) + " kB).");
+		} catch (RuntimeException ex) {
+			throw ex;
+		} catch (Exception ex) {
+			if (MeBoy.debug) {
+				ex.printStackTrace();
+			}
+			throw new RuntimeException(MeBoy.literal[49] + " (" + cartName + ", " + ex + ")");
+		}
+	}
+
+	private boolean hasValidHeaderAt(byte[] data, int offset) {
+		if (data.length <= offset + 0x148) {
+			return false;
+		}
+		return (data[offset + 0x0104] == (byte) 0xCE)
+				&& (data[offset + 0x010d] == (byte) 0x73)
+				&& (data[offset + 0x0118] == (byte) 0x88);
 	}
 	
 	/** Maps a ROM bank into the CPU address space at 0x4000 */

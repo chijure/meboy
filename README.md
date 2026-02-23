@@ -9,7 +9,7 @@ Requirements:
 
 Compile:
 ```powershell
-& 'C:\Program Files\Java\jdk1.8.0_221\bin\javac.exe' -cp '.;C:\WTK2.5.2_01\lib\cldcapi11.jar;C:\WTK2.5.2_01\lib\midpapi20.jar;C:\WTK2.5.2_01\lib\mmapi.jar;C:\WTK2.5.2_01\lib\jsr082.jar' *.java se\arktos\meboy\*.java
+& 'C:\Program Files\Java\jdk1.8.0_221\bin\javac.exe' -cp '.;C:\WTK2.5.2_01\lib\cldcapi11.jar;C:\WTK2.5.2_01\lib\midpapi20.jar;C:\WTK2.5.2_01\lib\mmapi.jar;C:\WTK2.5.2_01\lib\jsr082.jar;C:\WTK2.5.2_01\lib\jsr75.jar' *.java se\arktos\meboy\*.java
 ```
 
 Compile 2:
@@ -39,8 +39,10 @@ Use 32-bit Java to match KEmulator native SWT DLLs:
 If KEmulator reports `Unsupported major.minor version`, rebuild the MIDlet classes with Java 5 target before creating `MeBoy.jar`:
 
 ```powershell
-& 'C:\Program Files\Java\jdk1.8.0_221\bin\javac.exe' -source 1.5 -target 1.5 -cp ".;C:\WTK2.5.2_01\lib\cldcapi11.jar;C:\WTK2.5.2_01\lib\midpapi20.jar;C:\WTK2.5.2_01\lib\jsr082.jar;C:\WTK2.5.2_01\lib\mmapi.jar" *.java
+& 'C:\Program Files\Java\jdk1.8.0_221\bin\javac.exe' -source 1.5 -target 1.5 -cp ".;C:\WTK2.5.2_01\lib\cldcapi11.jar;C:\WTK2.5.2_01\lib\midpapi20.jar;C:\WTK2.5.2_01\lib\jsr082.jar;C:\WTK2.5.2_01\lib\jsr75.jar;C:\WTK2.5.2_01\lib\mmapi.jar" *.java
 ```
+
+This build includes an extra main menu option: `Load ROM from SD`, which browses JSR-75 storage roots and opens `.gb/.gbc/.cgb` files directly.
 
 ## License
 Meboy is distributed under [GPLv2 license](https://github.com/chijure/meboy/blob/master/LICENSE).
