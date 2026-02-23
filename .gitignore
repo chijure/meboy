@@ -1,0 +1,26 @@
+# Java build outputs
+*.class
+*.jar
+*.war
+*.ear
+
+# Common build directories
+bin/
+build/
+out/
+dist/
+target/
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+
+# IDE/editor files
+.idea/
+*.iml
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
