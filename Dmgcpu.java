@@ -2492,7 +2492,7 @@ public class Dmgcpu implements Runnable {
 	/** Create a cartridge object, loading ROM and any associated battery RAM from the cartridge
 		*  filename given. */
 	private final void initCartridge() {
-		byte[] externalRom = MeBoy.getExternalRom(cartName);
+		byte[] externalRom = MeBoy.takeExternalRom(cartName);
 		if (externalRom != null) {
 			initCartridgeFromBytes(externalRom);
 			return;

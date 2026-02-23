@@ -73,6 +73,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 	private int numCarts;
 	private boolean fatalError;
 	private boolean fileSystemAvailable = false;
+	private boolean fileTaskRunning = false;
 	private javax.microedition.lcdui.List fileBrowserList;
 	private String currentBrowserPath = "file:///";
 	private final Vector browserEntries = new Vector();
@@ -500,7 +501,11 @@ public class MeBoy extends MIDlet implements CommandListener {
 		} else if (item == literal[2]) {
 			showSettings();
 		} else if (LOAD_SD_LABEL.equals(item)) {
-			showFileBrowser("file:///");
+			runFileTask(new Runnable() {
+				public void run() {
+					showFileBrowser("file:///");
+				}
+			});
 		} else if (item == literal[4]) {
 			bluetooth = new Bluetooth(this);
 		} else if (item == literal[5]) {
@@ -916,6 +921,15 @@ public class MeBoy extends MIDlet implements CommandListener {
 			return;
 		}
 		String selected = (String) browserEntries.elementAt(index);
+		final String selectedEntry = selected;
+		runFileTask(new Runnable() {
+			public void run() {
+				handleFileBrowserSelection(selectedEntry);
+			}
+		});
+	}
+
+	private void handleFileBrowserSelection(String selected) {
 		if (BACK_DIR_LABEL.equals(selected)) {
 			showFileBrowser(parentDirectory(currentBrowserPath));
 			return;
@@ -924,7 +938,6 @@ public class MeBoy extends MIDlet implements CommandListener {
 			showFileBrowser(selected);
 			return;
 		}
-
 		loadRomFromFile(selected);
 	}
 
@@ -1008,6 +1021,28 @@ public class MeBoy extends MIDlet implements CommandListener {
 		}
 		return out.toByteArray();
 	}
+
+	private void runFileTask(final Runnable action) {
+		if (fileTaskRunning) {
+			return;
+		}
+		fileTaskRunning = true;
+		final Form wait = new Form("MeBoy");
+		wait.append("Opening storage...");
+		display.setCurrent(wait);
+
+		new Thread(new Runnable() {
+			public void run() {
+				try {
+					action.run();
+				} catch (Throwable t) {
+					showError("File operation failed.", null, t);
+				} finally {
+					fileTaskRunning = false;
+				}
+			}
+		}).start();
+	}
 	
 	public void commandAction(Command com, Displayable s) {
 		if (s == messageForm)
@@ -1067,8 +1102,12 @@ public class MeBoy extends MIDlet implements CommandListener {
 		externalRoms.put(cartName, romData);
 	}
 
-	public static byte[] getExternalRom(String cartName) {
-		return (byte[]) externalRoms.get(cartName);
+	public static byte[] takeExternalRom(String cartName) {
+		byte[] data = (byte[]) externalRoms.get(cartName);
+		if (data != null) {
+			externalRoms.remove(cartName);
+		}
+		return data;
 	}
 	
 	private int findMatch(String match, String[] list, boolean fuzzy) {

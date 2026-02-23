@@ -44,6 +44,12 @@ If KEmulator reports `Unsupported major.minor version`, rebuild the MIDlet class
 
 This build includes an extra main menu option: `Load ROM from SD`, which browses JSR-75 storage roots and opens `.gb/.gbc/.cgb` files directly.
 
+For WTK 2.5.2, put ROM files in:
+
+`C:\Users\chiju\j2mewtk\2.5.2\appdb\DefaultColorPhone\filesystem\root1\`
+
+Then in MeBoy use `Load ROM from SD` and open `root1/`.
+
 ## License
 Meboy is distributed under [GPLv2 license](https://github.com/chijure/meboy/blob/master/LICENSE).
 
