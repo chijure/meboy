@@ -52,6 +52,12 @@ import javax.swing.filechooser.FileFilter;
  * carts file.
  */
 public class MeBoyBuilder implements ActionListener, ListSelectionListener, WindowListener {
+	private static final String APP_TITLE = "MeBoyBuilder 2.1";
+	private static final int DEFAULT_ICON_INDEX = 2;
+	private static final int CUSTOM_ICON_INDEX = 3;
+	private static final int ICON_MIN_SIZE = 16;
+	private static final int ICON_MAX_SIZE = 80;
+
 	public static void main(String[] args) {
 		checkForUpdates();
 		new MeBoyBuilder();
@@ -60,7 +66,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 	static Bluetooth bluetoothInstance;
 	static ImageIcon optionIcon;
 	
-	JFrame frame = new JFrame("MeBoyBuilder 2.1");
+	JFrame frame = new JFrame(APP_TITLE);
 	JButton addGame = new JButton("Add game");
 	JButton removeGame = new JButton("Remove game");
 	JButton renameGame = new JButton("Rename game");
@@ -71,7 +77,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 	ImageIcon[] icon = new ImageIcon[4];
 	JRadioButton[] iconButton = {new JRadioButton("small"), new JRadioButton("medium"), new JRadioButton("large"), new JRadioButton("other...")};
 	JLabel iconLabel = new JLabel();
-	int selectedIcon = 2; // large
+	int selectedIcon = DEFAULT_ICON_INDEX; // large
 	
 	ArrayList<Game> games = new ArrayList<Game>();
 	
@@ -79,7 +85,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 	JFileChooser iconChooser = new JFileChooser();
 	
 	JPanel content = new JPanel(new BorderLayout(4, 4));
-	JList list = new JList();
+	JList<String> list = new JList<String>();
 	JScrollPane jsp = new JScrollPane(list, JScrollPane.VERTICAL_SCROLLBAR_ALWAYS,
 			JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
 
@@ -132,7 +138,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
-		optionIcon = icon[2];
+		optionIcon = icon[DEFAULT_ICON_INDEX];
 		ButtonGroup g = new ButtonGroup();
 		for (JRadioButton b : iconButton) {
 			g.add(b);
@@ -169,11 +175,19 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 			names[i++] = g.label(); 
 		}
 		
-		list = new JList(names);
+		list = new JList<String>(names);
 		list.addListSelectionListener(this);
 		jsp.setViewportView(list);
 		content.revalidate();
 		valueChanged(null);
+	}
+
+	private int getSelectedGameIndex() {
+		int selectedIndex = list.getSelectedIndex();
+		if (selectedIndex < 0) {
+			return -1;
+		}
+		return selectedIndex;
 	}
 
 	public void valueChanged(ListSelectionEvent e) {
@@ -189,8 +203,8 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 		String q = "Do you want to discard changes and quit? A MeBoy.jar file " +
 			"has not yet been created with the games you added.";
 
-		int response = JOptionPane.showOptionDialog(frame, string2JTA(q), "MeBoyBuilder 2.1", 0,
-				JOptionPane.PLAIN_MESSAGE, icon[2], new Object[] { "Quit", "Cancel"}, "Quit");
+		int response = JOptionPane.showOptionDialog(frame, string2JTA(q), APP_TITLE, 0,
+				JOptionPane.PLAIN_MESSAGE, icon[DEFAULT_ICON_INDEX], new Object[] { "Quit", "Cancel"}, "Quit");
 
 		if (response == 0)
 			System.exit(0);
@@ -205,14 +219,14 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 				fatalException(ex);
 			}
 		} else if (e.getSource() == removeGame) {
-			int i = list.getSelectedIndex();
+			int i = getSelectedGameIndex();
 			if (i < 0)
 				return;
 			games.remove(i);
 			dirty = true;
 			updateList();
 		} else if (e.getSource() == renameGame) {
-			int i = list.getSelectedIndex();
+			int i = getSelectedGameIndex();
 			if (i < 0)
 				return;
 			
@@ -229,8 +243,8 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 			
 			if (findByDisplayName(s) != null) {
 				JOptionPane.showMessageDialog(frame,
-					string2JTA("Please select a unique name."), "MeBoyBuilder 2.1",
-					JOptionPane.PLAIN_MESSAGE, icon[2]);
+					string2JTA("Please select a unique name."), APP_TITLE,
+					JOptionPane.PLAIN_MESSAGE, icon[DEFAULT_ICON_INDEX]);
 				return;
 			}
 			g.displayName = s;
@@ -255,7 +269,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 				iconLabel.setIcon(icon[i]);
 			}
 		}
-		if (e.getSource() == iconButton[icon.length - 1]) {
+		if (e.getSource() == iconButton[CUSTOM_ICON_INDEX]) {
 			int returnVal = iconChooser.showOpenDialog(frame);
 			if (returnVal != JFileChooser.APPROVE_OPTION) {
 				iconButton[selectedIcon].setSelected(true);
@@ -265,20 +279,21 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 			try {
 				File f = iconChooser.getSelectedFile();
 				System.out.println(f);
-				selectedIcon = icon.length - 1;
+				selectedIcon = CUSTOM_ICON_INDEX;
 				ImageIcon i = new ImageIcon(f.getCanonicalPath());
-				if (i.getIconHeight() > 80 || i.getIconHeight() < 16 || i.getIconWidth() > 80 || i.getIconWidth() < 16)
+				if (i.getIconHeight() > ICON_MAX_SIZE || i.getIconHeight() < ICON_MIN_SIZE
+						|| i.getIconWidth() > ICON_MAX_SIZE || i.getIconWidth() < ICON_MIN_SIZE)
 					throw new RuntimeException(i.getIconHeight() + " " + i.getIconWidth());
 				
-				iconData[icon.length - 1] = readAll(new FileInputStream(f));
-				icon[icon.length - 1] = i;
-				iconLabel.setIcon(icon[icon.length - 1]);
+				iconData[CUSTOM_ICON_INDEX] = readAll(new FileInputStream(f));
+				icon[CUSTOM_ICON_INDEX] = i;
+				iconLabel.setIcon(icon[CUSTOM_ICON_INDEX]);
 			} catch (Exception ex) {
 				iconButton[1].setSelected(true);
 				iconLabel.setIcon(icon[1]);
 				ex.printStackTrace();
 				JOptionPane.showMessageDialog(frame, "Please select an image file with a size between 16x16 and 80x80 pixels.",
-						"MeBoy Error", JOptionPane.ERROR_MESSAGE, icon[2]);
+						"MeBoy Error", JOptionPane.ERROR_MESSAGE, icon[DEFAULT_ICON_INDEX]);
 			}
 		}
 	}
@@ -411,7 +426,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 			dirty = true;
 		} else {
 			JOptionPane.showMessageDialog(null, string2JTA(error), "MeBoyBuilder warning",
-					JOptionPane.WARNING_MESSAGE, icon[2]);
+					JOptionPane.WARNING_MESSAGE, icon[DEFAULT_ICON_INDEX]);
 		}
 	}
 
@@ -437,8 +452,8 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 			String a1 = "Use MeBoy";
 			String a2 = "Use " + midletName;
 
-			int response = JOptionPane.showOptionDialog(frame, string2JTA(q), "MeBoyBuilder 2.1", 0,
-					JOptionPane.PLAIN_MESSAGE, icon[2], new Object[] { a1, a2}, a1);
+			int response = JOptionPane.showOptionDialog(frame, string2JTA(q), APP_TITLE, 0,
+					JOptionPane.PLAIN_MESSAGE, icon[DEFAULT_ICON_INDEX], new Object[] { a1, a2}, a1);
 
 			if (response == -1)
 				return;
@@ -561,7 +576,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 				+ ".jar to your phone.\n" + "- If your phone accepted " + midletName
 				+ ".jar, you do not need " + midletName + ".jad and can safely throw it away.\n"
 				+ "- If your phone requires a \".jad\" file, transfer " + midletName
-				+ ".jad instead."), "MeBoyBuilder Finished", JOptionPane.INFORMATION_MESSAGE, icon[2]);
+				+ ".jad instead."), "MeBoyBuilder Finished", JOptionPane.INFORMATION_MESSAGE, icon[DEFAULT_ICON_INDEX]);
 	}
 	
 	private static void fatalException(Exception ex) {
@@ -604,7 +619,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 					.showOptionDialog(
 							null,
 							string2JTA("Do you want MeBoyBuilder to automatically check for program updates when launched?"),
-							"MeBoyBuilder 2.1", 0, JOptionPane.PLAIN_MESSAGE, optionIcon, new Object[] {
+							APP_TITLE, 0, JOptionPane.PLAIN_MESSAGE, optionIcon, new Object[] {
 									"Don't check", "Check"}, "Check");
 
 			if (response == 1) {
@@ -643,7 +658,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 					String message = new String(buf, 0, done);
 
 					int response = JOptionPane.showOptionDialog(null,
-							string2JTA(message.toString()), "MeBoyBuilder 2.1", 0,
+							string2JTA(message.toString()), APP_TITLE, 0,
 							JOptionPane.PLAIN_MESSAGE, optionIcon, new Object[] { "Cancel",
 									"Visit homepage"}, "Visit homepage");
 
@@ -729,7 +744,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 	public void windowOpened(WindowEvent e) {}
 }
 
-class Game implements Comparable {
+class Game implements Comparable<Game> {
 	String displayName;
 	String cartID;
 	String fileName;
@@ -738,8 +753,8 @@ class Game implements Comparable {
 		return displayName + ", " + data.length / 1024 + " kB";
 	}
 	
-	public int compareTo(Object o) {
-		return displayName.toLowerCase().compareTo(((Game) o).displayName.toLowerCase());
+	public int compareTo(Game o) {
+		return displayName.toLowerCase().compareTo(o.displayName.toLowerCase());
 	}
 }
 
