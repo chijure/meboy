@@ -60,7 +60,7 @@ LEGAL: This product is not affiliated with, nor authorized, endorsed or licensed
 - Bjorn Carlin [arktos] - Creator of the original MeBoy for J2ME
 
 [millstone]:
-http://www.millstone.demon.co.uk/download/javaboy/
+https://web.archive.org/web/20200607201027/http://www.millstone.demon.co.uk/download/javaboy/
 
 [arktos]:
 http://arktos.se/meboy
