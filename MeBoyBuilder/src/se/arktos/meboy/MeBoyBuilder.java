@@ -501,21 +501,22 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 
 			int maxFileSize = 1 << 17; // for each split file
 
-			for (int j = 0; j < Math.max(1, g.data.length / maxFileSize); j++) {
-				zo.putNextEntry(new ZipEntry(g.cartID + j));
+			int parts = Math.max(1, (g.data.length + maxFileSize - 1) / maxFileSize);
+			for (int j = 0; j < parts; j++) {
+				zo.putNextEntry(new ZipEntry("meboy/" + g.cartID + j));
 				zo.write(g.data, j * maxFileSize, Math.min(maxFileSize, g.data.length - j * maxFileSize));
 			}
 		}
 
 		// copy MeBoy files
 		String[] files = new String[] {
-				"AdvancedGraphicsChip.class",
-				"Bluetooth.class",
-				"Dmgcpu.class",
-				"GBCanvas.class",
-				"GraphicsChip.class",
-				"MeBoy.class",
-				"SimpleGraphicsChip.class",
+				"meboy/AdvancedGraphicsChip.class",
+				"meboy/Bluetooth.class",
+				"meboy/Dmgcpu.class",
+				"meboy/GBCanvas.class",
+				"meboy/GraphicsChip.class",
+				"meboy/MeBoy.class",
+				"meboy/SimpleGraphicsChip.class",
 				"lang/index.txt", "lang/0.txt"};
 		for (String copyName : files) {
 			InputStream tis = openResourceOrFile(copyName);
@@ -525,6 +526,22 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 						+ "the output file, and MeBoy.jar will not function correctly."));
 			}
 
+			zo.putNextEntry(new ZipEntry(copyName));
+			byte[] buf = new byte[100000];
+			int r = tis.read(buf, 0, 100000);
+			while (r >= 0) {
+				if (r > 0)
+					zo.write(buf, 0, r);
+				r = tis.read(buf, 0, 100000);
+			}
+			tis.close();
+		}
+		// optional anonymous inner classes generated for meboy.MeBoy
+		for (int i = 1; i < 20; i++) {
+			String copyName = "meboy/MeBoy$" + i + ".class";
+			InputStream tis = openResourceOrFile(copyName);
+			if (tis == null)
+				continue;
 			zo.putNextEntry(new ZipEntry(copyName));
 			byte[] buf = new byte[100000];
 			int r = tis.read(buf, 0, 100000);
@@ -571,7 +588,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 		// add manifest
 		zo.putNextEntry(new ZipEntry("META-INF/MANIFEST.MF"));
 		PrintWriter pw = new PrintWriter(zo);
-		pw.write("MIDlet-1: " + midletName + ", meboy.png, MeBoy\n");
+		pw.write("MIDlet-1: " + midletName + ", meboy.png, meboy.MeBoy\n");
 		pw.write("MIDlet-Name: " + midletName + "\n");
 		pw.write("MIDlet-Vendor: Bjorn Carlin, www.arktos.se\n");
 		pw.write("MIDlet-Version: 2.3.0\n");
@@ -584,7 +601,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 
 		// create .jad
 		pw = new PrintWriter(new FileWriter(new File(f.getParent(), midletName + ".jad")));
-		pw.write("MIDlet-1: " + midletName + ", meboy.png, MeBoy\n");
+		pw.write("MIDlet-1: " + midletName + ", meboy.png, meboy.MeBoy\n");
 		pw.write("MIDlet-Name: " + midletName + "\n");
 		pw.write("MIDlet-Vendor: Bjorn Carlin, www.arktos.se\n");
 		pw.write("MIDlet-Version: 2.3.0\n");
@@ -612,11 +629,66 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 		if (resource != null) {
 			return resource;
 		}
-		File file = new File(name);
-		if (file.exists() && file.isFile()) {
-			return new FileInputStream(file);
+		InputStream rootResource = MeBoyBuilder.class.getResourceAsStream("/" + name);
+		if (rootResource != null) {
+			return rootResource;
 		}
+
+		String[] fileCandidates = new String[] {
+				name,
+				"build/compiled/" + name,
+				"build/preverified/" + name,
+				"resources/" + name,
+				"MeBoy/build/compiled/" + name,
+				"MeBoy/build/preverified/" + name,
+				"MeBoy/resources/" + name,
+				"../MeBoy/build/compiled/" + name,
+				"../MeBoy/build/preverified/" + name,
+				"../MeBoy/resources/" + name
+		};
+		for (String candidate : fileCandidates) {
+			File file = new File(candidate);
+			if (file.exists() && file.isFile()) {
+				return new FileInputStream(file);
+			}
+		}
+
+		String[] jarCandidates = new String[] {
+				"dist/MeBoy.jar",
+				"MeBoy/dist/MeBoy.jar",
+				"../MeBoy/dist/MeBoy.jar"
+		};
+		for (String jarPath : jarCandidates) {
+			InputStream jarEntry = openJarEntry(jarPath, name);
+			if (jarEntry != null) {
+				return jarEntry;
+			}
+		}
+
 		return null;
+	}
+
+	private InputStream openJarEntry(String jarPath, String entryName) throws IOException {
+		File jarFile = new File(jarPath);
+		if (!jarFile.exists() || !jarFile.isFile())
+			return null;
+
+		final ZipFile zip = new ZipFile(jarFile);
+		ZipEntry entry = zip.getEntry(entryName);
+		if (entry == null) {
+			zip.close();
+			return null;
+		}
+		final InputStream entryStream = zip.getInputStream(entry);
+		return new FilterInputStream(entryStream) {
+			public void close() throws IOException {
+				try {
+					super.close();
+				} finally {
+					zip.close();
+				}
+			}
+		};
 	}
 	
 	private static void fatalException(Exception ex) {

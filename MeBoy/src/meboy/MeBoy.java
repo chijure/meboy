@@ -1,3 +1,5 @@
+package meboy;
+
 /*
 
 MeBoy
@@ -40,12 +42,12 @@ import javax.microedition.rms.*;
  */
 public class MeBoy extends MIDlet implements CommandListener {
 	// Settings, etc.
-	public static final boolean debug = false;
+	public static final boolean debug = true;
 	public static int rotations = 0;
-	public static int maxFrameSkip = 3;
-	public static boolean enableScaling = true;
+	public static int maxFrameSkip = 7;
+	public static boolean enableScaling = false;
 	public static int scalingMode = 0;
-	public static boolean keepProportions = true;
+	public static boolean keepProportions = false;
 	public static boolean fullScreen = false;
 	public static boolean disableColor = false;
 	public static boolean enableSound = false;
@@ -66,7 +68,9 @@ public class MeBoy extends MIDlet implements CommandListener {
 	private static int[] languageLookup = new int[] {0};
 	private static final String LOAD_SD_LABEL = "Load ROM from SD";
 	private static final String BACK_DIR_LABEL = "..";
+	private static final int MAX_EXTERNAL_ROM_SIZE = 4 * 1024 * 1024;
 	private static final Hashtable externalRoms = new Hashtable();
+	private static final Hashtable externalRomFiles = new Hashtable();
 	private String[] cartDisplayName = null;
 	private String[] cartFileName = null;
 	private String[] cartID = null;
@@ -137,7 +141,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 
 	private boolean readLiteralsFile() {
 		try {
-			InputStreamReader isr = new InputStreamReader(getClass().getResourceAsStream("/lang/" + language + ".txt"), "UTF-8");
+			InputStreamReader isr = openLangReader(language + ".txt");
 			int counter = 0;
 			String s;
 			while ((s = next(isr)) != null)
@@ -161,18 +165,27 @@ public class MeBoy extends MIDlet implements CommandListener {
 
 	private void readLangIndexFile() {
 		try {
-			InputStreamReader isr = new InputStreamReader(getClass().getResourceAsStream("/lang/index.txt"), "UTF-8");
+			InputStreamReader isr = openLangReader("index.txt");
 			
-			String s;
-			languageLookup = new int[20];
+			String code;
 			Vector langVector = new Vector();
+			Vector lookupVector = new Vector();
 			languageCount = 0;
-			while ((s = next(isr)) != null) {
-				languageLookup[languageCount++] = s.charAt(0) - 'a';
-				langVector.addElement(next(isr));
+			while ((code = next(isr)) != null) {
+				String langName = next(isr);
+				if (code.length() == 0 || langName == null) {
+					continue;
+				}
+				lookupVector.addElement(new Integer(code.charAt(0) - 'a'));
+				langVector.addElement(langName);
+				languageCount++;
 			}
 			languages = new String[languageCount];
 			langVector.copyInto(languages);
+			languageLookup = new int[languageCount];
+			for (int i = 0; i < languageCount; i++) {
+				languageLookup[i] = ((Integer) lookupVector.elementAt(i)).intValue();
+			}
 			
 			isr.close();
 		} catch (Exception e) {
@@ -184,6 +197,21 @@ public class MeBoy extends MIDlet implements CommandListener {
 				e.printStackTrace();
 			}
 		}
+	}
+
+	private InputStreamReader openLangReader(String fileName) throws IOException {
+		String[] resourcePaths = new String[] {
+			"/lang/" + fileName,
+			"../../lang/" + fileName,
+			"lang/" + fileName
+		};
+		for (int i = 0; i < resourcePaths.length; i++) {
+			InputStream stream = getClass().getResourceAsStream(resourcePaths[i]);
+			if (stream != null) {
+				return new InputStreamReader(stream, "UTF-8");
+			}
+		}
+		throw new IOException("Language resource not found: " + fileName);
 	}
 	
 	private String next(InputStreamReader isr) throws IOException {
@@ -439,23 +467,36 @@ public class MeBoy extends MIDlet implements CommandListener {
 	
 	public static void showError(String message, String details, Throwable exception) {
 		if (message == null)
-			message = literal[47];
-		instance.showMessage(literal[46], message + formatDetails(details, exception));
+			message = getLiteralOrDefault(47, "Error");
+		instance.showMessage(getLiteralOrDefault(46, "Error"), message + formatDetails(details, exception));
 		if (instance.gbCanvas != null)
 			instance.gbCanvas.releaseReferences();
 		instance.gbCanvas = null;
 	}
 
 	public static void showLog() {
-		instance.showMessage(literal[28], logString);
+		instance.showMessage(getLiteralOrDefault(28, "Log"), logString);
 	}
 	
 	public void showMessage(String title, String message) {
+		if (title == null || title.length() == 0) {
+			title = "MeBoy";
+		}
+		if (message == null) {
+			message = "";
+		}
 		messageForm = new Form(title);
 		messageForm.append(message);
 		messageForm.setCommandListener(this);
-		messageForm.addCommand(new Command(literal[10], Command.BACK, 0));
+		messageForm.addCommand(new Command(getLiteralOrDefault(10, "Back"), Command.BACK, 0));
 		display.setCurrent(messageForm);
+	}
+
+	private static String getLiteralOrDefault(int index, String fallback) {
+		if (index >= 0 && index < literal.length && literal[index] != null && literal[index].length() > 0) {
+			return literal[index];
+		}
+		return fallback;
 	}
 	
 	private void messageCommand() {
@@ -943,34 +984,20 @@ public class MeBoy extends MIDlet implements CommandListener {
 
 	private void loadRomFromFile(String fileUrl) {
 		try {
-			FileConnection fc = (FileConnection) Connector.open(fileUrl, Connector.READ);
-			byte[] romData;
-			String displayName;
-			try {
-				if (!fc.exists() || fc.isDirectory()) {
-					throw new IOException("Not a ROM file.");
-				}
-				displayName = fc.getName();
-				InputStream is = fc.openInputStream();
-				try {
-					romData = readAll(is);
-				} finally {
-					is.close();
-				}
-			} finally {
-				fc.close();
-			}
-
-			if (romData.length < 0x200) {
-				throw new IOException("ROM file too small.");
+			String displayName = fileUrl;
+			int lastSlash = fileUrl.lastIndexOf('/');
+			if (lastSlash >= 0 && lastSlash + 1 < fileUrl.length()) {
+				displayName = fileUrl.substring(lastSlash + 1);
 			}
 
 			String externalCartID = buildExternalCartID(fileUrl);
-			registerExternalRom(externalCartID, romData);
+			registerExternalRomFile(externalCartID, fileUrl);
 
 			gbCanvas = new GBCanvas(externalCartID, this, displayName);
 			fileBrowserList = null;
 			display.setCurrent(gbCanvas);
+		} catch (OutOfMemoryError oom) {
+			showError("Not enough memory to load ROM.", fileUrl, oom);
 		} catch (Exception e) {
 			showError("Could not load ROM from storage.", fileUrl, e);
 		}
@@ -1012,14 +1039,36 @@ public class MeBoy extends MIDlet implements CommandListener {
 		return "ext_" + hash;
 	}
 
-	private static byte[] readAll(InputStream is) throws IOException {
-		ByteArrayOutputStream out = new ByteArrayOutputStream();
-		byte[] buffer = new byte[4096];
-		int read;
-		while ((read = is.read(buffer)) > 0) {
-			out.write(buffer, 0, read);
+	private static int getLoadableRomLimitByMemory() {
+		try {
+			System.gc();
+			long free = Runtime.getRuntime().freeMemory();
+			if (free <= 0) {
+				return 256 * 1024;
+			}
+			long safe = (free * 2) / 3;
+			if (safe < 256 * 1024) {
+				safe = 256 * 1024;
+			}
+			if (safe > MAX_EXTERNAL_ROM_SIZE) {
+				safe = MAX_EXTERNAL_ROM_SIZE;
+			}
+			return (int) safe;
+		} catch (Throwable t) {
+			return 512 * 1024;
 		}
-		return out.toByteArray();
+	}
+
+	private static String formatBytes(long bytes) {
+		if (bytes < 1024) {
+			return bytes + " B";
+		}
+		long kb = bytes / 1024;
+		if (kb < 1024) {
+			return kb + " KB";
+		}
+		long mbTimes100 = (bytes * 100) / (1024 * 1024);
+		return (mbTimes100 / 100) + "." + ((mbTimes100 / 10) % 10) + " MB";
 	}
 
 	private void runFileTask(final Runnable action) {
@@ -1108,6 +1157,21 @@ public class MeBoy extends MIDlet implements CommandListener {
 			externalRoms.remove(cartName);
 		}
 		return data;
+	}
+
+	public static void registerExternalRomFile(String cartName, String fileUrl) {
+		if (cartName == null || fileUrl == null) {
+			return;
+		}
+		externalRomFiles.put(cartName, fileUrl);
+	}
+
+	public static String takeExternalRomFile(String cartName) {
+		String path = (String) externalRomFiles.get(cartName);
+		if (path != null) {
+			externalRomFiles.remove(cartName);
+		}
+		return path;
 	}
 	
 	private int findMatch(String match, String[] list, boolean fuzzy) {

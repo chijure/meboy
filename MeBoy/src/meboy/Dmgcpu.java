@@ -1,3 +1,5 @@
+package meboy;
+
 /*
 
 MeBoy
@@ -28,6 +30,8 @@ Place - Suite 330, Boston, MA 02111-1307, USA.
 
 import javax.microedition.media.*;
 import javax.microedition.media.control.*;
+import javax.microedition.io.*;
+import javax.microedition.io.file.*;
 
 /** This is the main controlling class for the emulation
 *  It contains the code to emulate the Z80-like processor
@@ -2497,6 +2501,11 @@ public class Dmgcpu implements Runnable {
 			initCartridgeFromBytes(externalRom);
 			return;
 		}
+		String externalRomFile = MeBoy.takeExternalRomFile(cartName);
+		if (externalRomFile != null) {
+			initCartridgeFromFile(externalRomFile);
+			return;
+		}
 
 		java.io.InputStream is = getClass().getResourceAsStream(cartName + '0');
 		if (is == null) {
@@ -2639,6 +2648,108 @@ public class Dmgcpu implements Runnable {
 				ex.printStackTrace();
 			}
 			throw new RuntimeException(MeBoy.literal[49] + " (" + cartName + ", " + ex + ")");
+		}
+	}
+
+	private final void initCartridgeFromFile(String fileUrl) {
+		FileConnection fc = null;
+		java.io.InputStream is = null;
+		try {
+			fc = (FileConnection) Connector.open(fileUrl, Connector.READ);
+			if (!fc.exists() || fc.isDirectory()) {
+				throw new RuntimeException("Not a ROM file: " + fileUrl);
+			}
+			long fileSize = fc.fileSize();
+			if (fileSize < 0x4000) {
+				throw new RuntimeException("ROM too small: " + fileSize);
+			}
+
+			is = fc.openInputStream();
+			byte[] firstHalf = new byte[0x2000];
+			int read = 0;
+			while (read < firstHalf.length) {
+				int r = is.read(firstHalf, read, firstHalf.length - read);
+				if (r <= 0) {
+					break;
+				}
+				read += r;
+			}
+			if (read < firstHalf.length) {
+				throw new RuntimeException("ROM header read failed.");
+			}
+
+			cartType = firstHalf[0x0147] & 0xff;
+			int declaredRomBanks = lookUpCartSize(firstHalf[0x0148] & 0xff);
+			int inferredRomBanks = (int) ((fileSize + 0x3fff) / 0x4000);
+			if (inferredRomBanks < 2) {
+				inferredRomBanks = 2;
+			}
+			int numRomBanks = declaredRomBanks;
+			if (numRomBanks <= 0) {
+				numRomBanks = inferredRomBanks;
+			} else if (numRomBanks > inferredRomBanks) {
+				numRomBanks = inferredRomBanks;
+			}
+
+			gbcFeatures = ((firstHalf[0x143] & 0x80) == 0x80) && !MeBoy.disableColor;
+			if (gbcFeatures) {
+				mainRam = new byte[0x8000];
+			} else {
+				mainRam = new byte[0x2000];
+			}
+			gbcRamBank = 1;
+
+			rom = new byte[numRomBanks * 2][0x2000];
+			rom[0] = firstHalf;
+			for (int i = 1; i < rom.length; i++) {
+				int offset = 0;
+				while (offset < 0x2000) {
+					int r = is.read(rom[i], offset, 0x2000 - offset);
+					if (r <= 0) {
+						break;
+					}
+					offset += r;
+				}
+				if (offset == 0) {
+					break;
+				}
+			}
+			loadedRomBanks = rom.length >> 1;
+
+			memory[0] = rom[0];
+			memory[1] = rom[1];
+			romTouch = new int[rom.length >> 1];
+			mapRom(1);
+
+			int numRamBanks = getNumRAMBanks();
+			if (numRamBanks == 0) {
+				numRamBanks = 1;
+			}
+			cartRam = new byte[numRamBanks][0x2000];
+			memory[5] = cartRam[0];
+			lastRtcUpdate = (int) System.currentTimeMillis();
+
+			MeBoy.log("Loaded external ROM file '" + fileUrl + "' (" + (numRomBanks * 16) + " kB).");
+		} catch (RuntimeException ex) {
+			throw ex;
+		} catch (Exception ex) {
+			if (MeBoy.debug) {
+				ex.printStackTrace();
+			}
+			throw new RuntimeException(MeBoy.literal[49] + " (" + cartName + ", " + ex + ")");
+		} finally {
+			try {
+				if (is != null) {
+					is.close();
+				}
+			} catch (Exception e) {
+			}
+			try {
+				if (fc != null) {
+					fc.close();
+				}
+			} catch (Exception e) {
+			}
 		}
 	}
 
@@ -2993,7 +3104,7 @@ public class Dmgcpu implements Runnable {
 	public void releaseReferences() {
 		// This code helps the garbage collector on some platforms.
 		// (contributed by Alberto Simon)
-		incflags = null;
+            incflags = null;
 		decflags = null;
 		rtcReg = null;
 		cartRam = null;

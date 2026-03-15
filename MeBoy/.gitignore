@@ -1,31 +1,30 @@
-# Build outputs
+# Java artifacts
+*.class
+*.jar
+*.war
+*.ear
+
+# Build folders
+bin/
 build/
 dist/
 out/
 target/
-bin/
-
-# Java and Java ME artifacts
-*.class
-*.jar
-*.jad
-*.war
-*.ear
 
 # NetBeans private metadata
 nbproject/private/
 nbproject/cache/
 .netbeans/
 
-# IDE metadata
-.idea/
-.vscode/
-*.iml
-
 # Logs and temporary files
 *.log
 *.tmp
 *.bak
+
+# IDE/editor files
+.idea/
+*.iml
+.vscode/
 
 # OS files
 .DS_Store
