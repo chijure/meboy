@@ -33,13 +33,38 @@ import javax.microedition.rms.*;
 
 
 public class GBCanvas extends Canvas implements CommandListener {
+	private static final int BUTTON_COUNT = 8;
+	private static final int FPS_HISTORY_SIZE = 16;
+	private static final int FPS_HISTORY_MASK = FPS_HISTORY_SIZE - 1;
+	private static final int FPS_BAR_HEIGHT = 16;
+	private static final String SETTINGS_RECORD_NAME = "set";
+	private static final int INT_BYTES = 4;
+	private static final int SETTINGS_KEYS_OFFSET = 0;
+	private static final int SETTINGS_MAX_FRAME_SKIP_OFFSET = 32;
+	private static final int SETTINGS_ROTATIONS_OFFSET = 36;
+	private static final int SETTINGS_LAZY_LOADING_OFFSET = 40;
+	private static final int SETTINGS_SUSPEND_COUNTER_OFFSET = 44;
+	private static final int SETTINGS_SUSPEND10_COUNT_OFFSET = 48;
+	private static final int SETTINGS_SUSPEND10_DATA_OFFSET = 52;
+	private static final int SETTINGS_FIXED_PART_LENGTH = 55;
+	private static final int SETTINGS_FLAG_ENABLE_SCALING = 1;
+	private static final int SETTINGS_FLAG_KEEP_PROPORTIONS = 2;
+	private static final int SETTINGS_FLAG_FULLSCREEN = 4;
+	private static final int SETTINGS_FLAG_DISABLE_COLOR = 8;
+	private static final int SETTINGS_FLAG_LANGUAGE_V1 = 16;
+	private static final int SETTINGS_FLAG_ENABLE_SOUND = 32;
+	private static final int SETTINGS_FLAG_ADVANCED_SOUND = 64;
+	private static final int SETTINGS_FLAG_ADVANCED_GRAPHICS = 128;
+	private static final int SETTINGS_FLAG_SHOW_FPS = 1;
+	private static final int SETTINGS_FLAG_SHOW_LOG_ITEM = 2;
+
 	public MeBoy parent;
 	private Dmgcpu cpu;
 	private int w, h, l, t;
 	private int sw, sh, trans; // translation, and screen size (on screen, i.e. scaled and rotated if applicable)
 	private int ssw, ssh; // source screen width and height (possibly scaled, not rotated)
 	private int clipHeight; // maybe including fps
-	private int[] previousTime = new int[16];
+	private int[] previousTime = new int[FPS_HISTORY_SIZE];
 	private int previousTimeIx;
 	
 	private Command pauseCommand = new Command(MeBoy.literal[30], Command.SCREEN, 0);
@@ -172,7 +197,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 	}
 	
 	public void keyReleased(int keyCode) {
-		for (int i = 0; i < 8; i++) {
+		for (int i = 0; i < BUTTON_COUNT; i++) {
 			if (keyCode == key[i]) {
 				cpu.buttonUp(i);
 			}
@@ -182,7 +207,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 	public void keyPressed(int keyCode) {
 		if (settingKeys) {
 			key[keySetCounter++] = keyCode;
-			if (keySetCounter == 8) {
+			if (keySetCounter == BUTTON_COUNT) {
 				writeSettings();
 				settingKeys = false;
 			}
@@ -190,7 +215,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 			return;
 		}
 		
-		for (int i = 0; i < 8; i++) {
+		for (int i = 0; i < BUTTON_COUNT; i++) {
 			if (keyCode == key[i]) {
 				cpu.buttonDown(i);
 			}
@@ -275,9 +300,9 @@ public class GBCanvas extends Canvas implements CommandListener {
 	}
 	
 	public final void paintFps(Graphics g) {
-		g.setClip(l, t+sh, sw, 16);
+		g.setClip(l, t+sh, sw, FPS_BAR_HEIGHT);
 		g.setColor(0x999999);
-		g.fillRect(l, t+sh, sw, 16);
+		g.fillRect(l, t+sh, sw, FPS_BAR_HEIGHT);
 		g.setColor(0);
 		
 		int now = (int) System.currentTimeMillis();
@@ -285,7 +310,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 		// 17 ms * 60 fps * 2*16 seconds = 32640 ms
 		int estfps = ((32640 + now - previousTime[previousTimeIx]) / (now - previousTime[previousTimeIx])) >> 1;
 		previousTime[previousTimeIx] = now;
-		previousTimeIx = (previousTimeIx + 1) & 0x0F;
+		previousTimeIx = (previousTimeIx + 1) & FPS_HISTORY_MASK;
 		
 		g.drawString(estfps + " fps * " + (cpu.getLastSkipCount() + 1), l+1, t+sh, 20);
 	}
@@ -398,9 +423,9 @@ public class GBCanvas extends Canvas implements CommandListener {
 	public static final void writeSettings() {
 		RecordStore rs = null;
 		try {
-			rs = RecordStore.openRecordStore("set", true);
+			rs = RecordStore.openRecordStore(SETTINGS_RECORD_NAME, true);
 			
-			int bLength = 55;
+			int bLength = SETTINGS_FIXED_PART_LENGTH;
 			for (int i = 0; i < MeBoy.suspendName10.length; i++)
 				bLength += 1 + MeBoy.suspendName10[i].length();
 			for (int i = 0; i < MeBoy.suspendName20.length; i++)
@@ -409,15 +434,15 @@ public class GBCanvas extends Canvas implements CommandListener {
 			
 			byte[] b = new byte[bLength];
 			
-			for (int i = 0; i < 8; i++)
-				setInt(b, i * 4, key[i]);
-			setInt(b, 32, MeBoy.maxFrameSkip);
-			setInt(b, 36, MeBoy.rotations);
-			setInt(b, 40, MeBoy.lazyLoadingThreshold);
-			setInt(b, 44, MeBoy.suspendCounter);
-			setInt(b, 48, MeBoy.suspendName10.length);
+			for (int i = 0; i < BUTTON_COUNT; i++)
+				setInt(b, SETTINGS_KEYS_OFFSET + (i * INT_BYTES), key[i]);
+			setInt(b, SETTINGS_MAX_FRAME_SKIP_OFFSET, MeBoy.maxFrameSkip);
+			setInt(b, SETTINGS_ROTATIONS_OFFSET, MeBoy.rotations);
+			setInt(b, SETTINGS_LAZY_LOADING_OFFSET, MeBoy.lazyLoadingThreshold);
+			setInt(b, SETTINGS_SUSPEND_COUNTER_OFFSET, MeBoy.suspendCounter);
+			setInt(b, SETTINGS_SUSPEND10_COUNT_OFFSET, MeBoy.suspendName10.length);
 			
-			int index = 52;
+			int index = SETTINGS_SUSPEND10_DATA_OFFSET;
 			for (int i = 0; i < MeBoy.suspendName10.length; i++) {
 				String s = MeBoy.suspendName10[i];
 				b[index++] = (byte) (s.length());
@@ -425,11 +450,16 @@ public class GBCanvas extends Canvas implements CommandListener {
 					b[index++] = (byte) s.charAt(j);
 			}
 			
-			b[index++] = (byte) ((MeBoy.enableScaling ? 1 : 0) + (MeBoy.keepProportions ? 2 : 0) + (MeBoy.fullScreen
-					? 4 : 0) + (MeBoy.disableColor ? 8 : 0) + (MeBoy.enableSound ? 32 : 0) + (MeBoy.advancedSound
-					? 64 : 0) + (MeBoy.advancedGraphics ? 128 : 0));
+			b[index++] = (byte) ((MeBoy.enableScaling ? SETTINGS_FLAG_ENABLE_SCALING : 0)
+					+ (MeBoy.keepProportions ? SETTINGS_FLAG_KEEP_PROPORTIONS : 0)
+					+ (MeBoy.fullScreen ? SETTINGS_FLAG_FULLSCREEN : 0)
+					+ (MeBoy.disableColor ? SETTINGS_FLAG_DISABLE_COLOR : 0)
+					+ (MeBoy.enableSound ? SETTINGS_FLAG_ENABLE_SOUND : 0)
+					+ (MeBoy.advancedSound ? SETTINGS_FLAG_ADVANCED_SOUND : 0)
+					+ (MeBoy.advancedGraphics ? SETTINGS_FLAG_ADVANCED_GRAPHICS : 0));
 			b[index++] = (byte) MeBoy.language;
-			b[index++] = (byte) ((MeBoy.showFps ? 1 : 0) + (MeBoy.showLogItem ? 2 : 0));
+			b[index++] = (byte) ((MeBoy.showFps ? SETTINGS_FLAG_SHOW_FPS : 0)
+					+ (MeBoy.showLogItem ? SETTINGS_FLAG_SHOW_LOG_ITEM : 0));
 
 			b[index++] = (byte) MeBoy.suspendName20.length;
 			for (int i = 0; i < MeBoy.suspendName20.length; i++) {
@@ -468,31 +498,31 @@ public class GBCanvas extends Canvas implements CommandListener {
 			MeBoy.suspendName10 = new String[0];
 			MeBoy.suspendName20 = new String[0];
 			
-			rs = RecordStore.openRecordStore("set", true);
+			rs = RecordStore.openRecordStore(SETTINGS_RECORD_NAME, true);
 			if (rs.getNumRecords() > 0) {
 				MeBoy.log("Settings: existing RecordStore found, loading persisted settings");
 				byte[] b = rs.getRecord(1);
 				
-				for (int i = 0; i < 8; i++)
-					key[i] = getIntChecked(b, i * 4, "key[" + i + "]");
-				if (hasRange(b, 32, 4))
-					MeBoy.maxFrameSkip = getIntChecked(b, 32, "maxFrameSkip");
-				if (hasRange(b, 36, 4))
-					MeBoy.rotations = getIntChecked(b, 36, "rotations");
-				if (hasRange(b, 40, 4))
-					MeBoy.lazyLoadingThreshold = getIntChecked(b, 40, "lazyLoadingThreshold");
+				for (int i = 0; i < BUTTON_COUNT; i++)
+					key[i] = getIntChecked(b, SETTINGS_KEYS_OFFSET + (i * INT_BYTES), "key[" + i + "]");
+				if (hasRange(b, SETTINGS_MAX_FRAME_SKIP_OFFSET, INT_BYTES))
+					MeBoy.maxFrameSkip = getIntChecked(b, SETTINGS_MAX_FRAME_SKIP_OFFSET, "maxFrameSkip");
+				if (hasRange(b, SETTINGS_ROTATIONS_OFFSET, INT_BYTES))
+					MeBoy.rotations = getIntChecked(b, SETTINGS_ROTATIONS_OFFSET, "rotations");
+				if (hasRange(b, SETTINGS_LAZY_LOADING_OFFSET, INT_BYTES))
+					MeBoy.lazyLoadingThreshold = getIntChecked(b, SETTINGS_LAZY_LOADING_OFFSET, "lazyLoadingThreshold");
 				
-				int index = 44;
+				int index = SETTINGS_SUSPEND_COUNTER_OFFSET;
 				if (b.length > index) {
 					// suspended games index
 					MeBoy.suspendCounter = getIntChecked(b, index, "suspendCounter");
-					index += 4;
+					index += INT_BYTES;
 					int oldSuspendCount = getIntChecked(b, index, "suspendName10 length");
 					if (oldSuspendCount < 0) {
 						throw new Exception("Corrupt settings store: negative suspendName10 length");
 					}
 					MeBoy.suspendName10 = new String[oldSuspendCount];
-					index += 4;
+					index += INT_BYTES;
 					int[] indexRef = new int[] {index};
 					for (int i = 0; i < MeBoy.suspendName10.length; i++) {
 						MeBoy.suspendName10[i] = readByteString(b, indexRef, "suspendName10[" + i + "]");
@@ -502,14 +532,14 @@ public class GBCanvas extends Canvas implements CommandListener {
 
 				if (b.length > index) {
 					// settings, part 1
-					MeBoy.enableScaling = (b[index] & 1) != 0;
-					MeBoy.keepProportions = (b[index] & 2) != 0;
-					MeBoy.fullScreen = (b[index] & 4) != 0;
-					MeBoy.disableColor = (b[index] & 8) != 0;
-					MeBoy.language = (b[index] & 16) != 0 ? 1 : 0;
-					MeBoy.enableSound = (b[index] & 32) != 0;
-					MeBoy.advancedSound = (b[index] & 64) != 0;
-					MeBoy.advancedGraphics = (b[index] & 128) != 0;
+					MeBoy.enableScaling = (b[index] & SETTINGS_FLAG_ENABLE_SCALING) != 0;
+					MeBoy.keepProportions = (b[index] & SETTINGS_FLAG_KEEP_PROPORTIONS) != 0;
+					MeBoy.fullScreen = (b[index] & SETTINGS_FLAG_FULLSCREEN) != 0;
+					MeBoy.disableColor = (b[index] & SETTINGS_FLAG_DISABLE_COLOR) != 0;
+					MeBoy.language = (b[index] & SETTINGS_FLAG_LANGUAGE_V1) != 0 ? 1 : 0;
+					MeBoy.enableSound = (b[index] & SETTINGS_FLAG_ENABLE_SOUND) != 0;
+					MeBoy.advancedSound = (b[index] & SETTINGS_FLAG_ADVANCED_SOUND) != 0;
+					MeBoy.advancedGraphics = (b[index] & SETTINGS_FLAG_ADVANCED_GRAPHICS) != 0;
 					index++;
 				}
 
@@ -519,8 +549,8 @@ public class GBCanvas extends Canvas implements CommandListener {
 
 				if (b.length > index) {
 					// settings, part 2
-					MeBoy.showFps = (b[index] & 1) != 0;
-					MeBoy.showLogItem = (b[index] & 2) != 0;
+					MeBoy.showFps = (b[index] & SETTINGS_FLAG_SHOW_FPS) != 0;
+					MeBoy.showLogItem = (b[index] & SETTINGS_FLAG_SHOW_LOG_ITEM) != 0;
 					index++;
 				}
 
