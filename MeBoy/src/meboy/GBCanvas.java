@@ -223,9 +223,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 			} else if (c == saveCommand && !settingKeys) {
 				if (!cpu.isTerminated()) {
 					cpu.terminate();
-					while(cpuThread.isAlive()) {
-						Thread.yield();
-					}
+					waitForCpuThread();
 					suspend();
 					
 					cpuThread = new Thread(cpu);
@@ -256,10 +254,20 @@ public class GBCanvas extends Canvas implements CommandListener {
 		updateCommands();
 		
 		cpu.terminate();
-		while(cpuThread.isAlive()) {
-			Thread.yield();
-		}
+		waitForCpuThread();
 		cpuThread = null;
+	}
+
+	private void waitForCpuThread() {
+		Thread thread = cpuThread;
+		while (thread != null && thread.isAlive()) {
+			try {
+				Thread.sleep(10);
+			} catch (InterruptedException e) {
+				MeBoy.log("CPU thread wait interrupted: " + e.toString());
+				break;
+			}
+		}
 	}
 	
 	public final void redrawSmall() {
@@ -586,9 +594,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 		// This code helps the garbage collector on some platforms.
 		// (contributed by Alberto Simon)
         cpu.terminate();
-        while(cpuThread != null && cpuThread.isAlive()) {
-            Thread.yield();
-        }
+        waitForCpuThread();
         cpu.releaseReferences();
         cpu = null;
         
