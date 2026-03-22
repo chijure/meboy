@@ -199,29 +199,28 @@ public class GBCanvas extends Canvas implements CommandListener {
 	
 	public void commandAction(Command c, Displayable s) {
 		try {
-			String label = c.getLabel();
-			if (label.startsWith(MeBoy.literal[36])) {
+			if (c == exitCommand) {
 				if (cpu.hasBattery())
 					saveCartRam();
 				
 				parent.unloadCart();
 				Runtime.getRuntime().gc();
-			} else if (label == MeBoy.literal[30]) {
+			} else if (c == pauseCommand) {
 				pause();
-			} else if (label == MeBoy.literal[31] && !settingKeys) {
+			} else if (c == resumeCommand && !settingKeys) {
 				paused = false;
 				updateCommands();
 				
 				cpuThread = new Thread(cpu);
 				cpuThread.start();
-			} else if (label == MeBoy.literal[33]) {
+			} else if (c == showFpsCommand) {
 				MeBoy.showFps = !MeBoy.showFps;
 				setDimensions();
-			} else if (label == MeBoy.literal[35] && !settingKeys) {
+			} else if (c == setButtonsCommand && !settingKeys) {
 				pause();
 				settingKeys = true;
 				keySetCounter = 0;
-			} else if (label == MeBoy.literal[32] && !settingKeys) {
+			} else if (c == saveCommand && !settingKeys) {
 				if (!cpu.isTerminated()) {
 					cpu.terminate();
 					while(cpuThread.isAlive()) {
@@ -234,7 +233,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 				} else {
 					suspend();
 				}
-			} else if (label == MeBoy.literal[34] && !settingKeys) {
+			} else if (c == fullScreenCommand && !settingKeys) {
 				MeBoy.fullScreen = !MeBoy.fullScreen;
 				setFullScreenMode(MeBoy.fullScreen);
 				
@@ -413,6 +412,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 			
 			RecordStore rs = RecordStore.openRecordStore("set", true);
 			if (rs.getNumRecords() > 0) {
+				MeBoy.log("Settings: existing RecordStore found, loading persisted settings");
 				byte[] b = rs.getRecord(1);
 				
 				for (int i = 0; i < 8; i++)
@@ -476,7 +476,11 @@ public class GBCanvas extends Canvas implements CommandListener {
 						MeBoy.suspendName20[i] = new String(chars);
 					}
 				}
+				MeBoy.log("Settings: loaded persisted language id " + MeBoy.language + " (bytes=" + b.length + ")");
 			} else {
+				MeBoy.log("Settings: no RecordStore settings found, using locale auto-detection");
+				MeBoy.language = MeBoy.detectLanguageFromLocale();
+				MeBoy.log("Settings: auto-detected language id " + MeBoy.language + ", saving initial settings");
 				writeSettings();
 			}
 			rs.closeRecordStore();

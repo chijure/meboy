@@ -141,6 +141,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 
 	private boolean readLiteralsFile() {
 		try {
+			log("Language literals: loading /lang/" + language + ".txt");
 			InputStreamReader isr = openLangReader(language + ".txt");
 			int counter = 0;
 			String s;
@@ -149,9 +150,11 @@ public class MeBoy extends MIDlet implements CommandListener {
 			isr.close();
 			while (counter < literal.length)
 				literal[counter++] = "?";
+			log("Language literals: loaded " + counter + " entries for language id " + language);
 		} catch (Exception e) {
 			e.printStackTrace();
 			if (language > 0) {
+				log("Language literals: failed for language id " + language + ", falling back to 0");
 				language = 0;
 				return readLiteralsFile();
 			}
@@ -186,6 +189,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 			for (int i = 0; i < languageCount; i++) {
 				languageLookup[i] = ((Integer) lookupVector.elementAt(i)).intValue();
 			}
+			log("Language index: loaded " + languageCount + " languages, current language id=" + language);
 			
 			isr.close();
 		} catch (Exception e) {
@@ -197,6 +201,123 @@ public class MeBoy extends MIDlet implements CommandListener {
 				e.printStackTrace();
 			}
 		}
+	}
+
+	static int detectLanguageFromLocale() {
+		String[] localeProps = new String[] {
+			"microedition.locale",
+			"user.language",
+			"user.locale"
+		};
+		for (int i = 0; i < localeProps.length; i++) {
+			String locale = readSystemProperty(localeProps[i]);
+			log("Language detect: " + localeProps[i] + "=" + (locale == null ? "<null>" : locale));
+			int detected = mapLocaleToLanguage(locale);
+			if (detected >= 0) {
+				log("Language detect: matched locale from " + localeProps[i] + " -> language id " + detected);
+				return detected;
+			}
+		}
+		log("Language detect: no locale match, defaulting to language id 0");
+		return 0;
+	}
+
+	private static String readSystemProperty(String key) {
+		try {
+			String value = System.getProperty(key);
+			if (value != null && value.length() > 0) {
+				return value.toLowerCase();
+			}
+		} catch (Throwable t) {
+		}
+		return null;
+	}
+
+	private static boolean hasLanguagePrefix(String locale, String prefix) {
+		if (locale == null || prefix == null || !locale.startsWith(prefix)) {
+			return false;
+		}
+		if (locale.length() == prefix.length()) {
+			return true;
+		}
+		char separator = locale.charAt(prefix.length());
+		return separator == '_' || separator == '-' || separator == '.' || separator == '@';
+	}
+
+	private static int mapLocaleToLanguage(String locale) {
+		if (locale == null || locale.length() == 0) {
+			return -1;
+		}
+		// Some emulators report names like "Spanish_Peru.1252" instead of ISO codes.
+		if (hasLanguagePrefix(locale, "es") || locale.indexOf("spanish") >= 0 || locale.indexOf("espan") >= 0
+				|| locale.indexOf("castell") >= 0) {
+			return 1; // Espanol
+		}
+		if (hasLanguagePrefix(locale, "el") || locale.indexOf("greek") >= 0) {
+			return 2;
+		}
+		if (hasLanguagePrefix(locale, "pt") || locale.indexOf("portugu") >= 0) {
+			return 3;
+		}
+		if (hasLanguagePrefix(locale, "zh") || locale.indexOf("chinese") >= 0) {
+			return 4;
+		}
+		if (hasLanguagePrefix(locale, "pl") || locale.indexOf("polish") >= 0) {
+			return 5;
+		}
+		if (hasLanguagePrefix(locale, "de") || locale.indexOf("german") >= 0 || locale.indexOf("deutsch") >= 0) {
+			return 6;
+		}
+		if (hasLanguagePrefix(locale, "nl") || locale.indexOf("dutch") >= 0 || locale.indexOf("neder") >= 0) {
+			return 7;
+		}
+		if (hasLanguagePrefix(locale, "id") || hasLanguagePrefix(locale, "in") || locale.indexOf("indones") >= 0) {
+			return 8;
+		}
+		if (hasLanguagePrefix(locale, "fr") || locale.indexOf("french") >= 0 || locale.indexOf("franc") >= 0) {
+			return 9;
+		}
+		if (hasLanguagePrefix(locale, "it") || locale.indexOf("ital") >= 0) {
+			return 10;
+		}
+		if (hasLanguagePrefix(locale, "cs") || hasLanguagePrefix(locale, "cz") || locale.indexOf("czech") >= 0
+				|| locale.indexOf("cesk") >= 0) {
+			return 11;
+		}
+		if (hasLanguagePrefix(locale, "ru") || locale.indexOf("russian") >= 0) {
+			return 12;
+		}
+		if (hasLanguagePrefix(locale, "hr") || locale.indexOf("croatian") >= 0 || locale.indexOf("hrvat") >= 0) {
+			return 13;
+		}
+		if (hasLanguagePrefix(locale, "sr") || locale.indexOf("serbian") >= 0 || locale.indexOf("srps") >= 0) {
+			return 14;
+		}
+		if (hasLanguagePrefix(locale, "uk") || locale.indexOf("ukrain") >= 0) {
+			return 15;
+		}
+		if (hasLanguagePrefix(locale, "lt") || locale.indexOf("lithuan") >= 0 || locale.indexOf("lietuv") >= 0) {
+			return 16;
+		}
+		if (hasLanguagePrefix(locale, "lv") || locale.indexOf("latv") >= 0) {
+			return 17;
+		}
+		if (hasLanguagePrefix(locale, "hu") || locale.indexOf("hungar") >= 0 || locale.indexOf("magyar") >= 0) {
+			return 18;
+		}
+		if (hasLanguagePrefix(locale, "gsw") || locale.indexOf("swiss") >= 0 || locale.indexOf("schwizer") >= 0) {
+			return 19;
+		}
+		if (hasLanguagePrefix(locale, "da") || locale.indexOf("danish") >= 0) {
+			return 20;
+		}
+		if (hasLanguagePrefix(locale, "tr") || locale.indexOf("turkish") >= 0 || locale.indexOf("turk") >= 0) {
+			return 21;
+		}
+		if (hasLanguagePrefix(locale, "en") || locale.indexOf("english") >= 0) {
+			return 0;
+		}
+		return -1;
 	}
 
 	private InputStreamReader openLangReader(String fileName) throws IOException {
@@ -535,11 +656,11 @@ public class MeBoy extends MIDlet implements CommandListener {
 
 	private void mainMenuCommand(Command com) {
 		String item = mainMenu.getString(mainMenu.getSelectedIndex());
-		if (item == literal[0]) {
+		if (literal[0].equals(item)) {
 			showCartList();
-		} else if (item == literal[1]) {
+		} else if (literal[1].equals(item)) {
 			showResumeGame();
-		} else if (item == literal[2]) {
+		} else if (literal[2].equals(item)) {
 			showSettings();
 		} else if (LOAD_SD_LABEL.equals(item)) {
 			runFileTask(new Runnable() {
@@ -547,14 +668,14 @@ public class MeBoy extends MIDlet implements CommandListener {
 					showFileBrowser("file:///");
 				}
 			});
-		} else if (item == literal[4]) {
+		} else if (literal[4].equals(item)) {
 			bluetooth = new Bluetooth(this);
-		} else if (item == literal[5]) {
+		} else if (literal[5].equals(item)) {
 			showMessage(literal[5], "MeBoy 2.3 © Björn Carlin, 2005-2009.\nhttp://arktos.se/meboy/");
-		} else if (item == literal[3]) {
+		} else if (literal[3].equals(item)) {
 			log(literal[29] + " " + Runtime.getRuntime().freeMemory() + "/" + Runtime.getRuntime().totalMemory());
 			showLog();
-		} else if (item == literal[6]) {
+		} else if (literal[6].equals(item)) {
 			destroyApp(true);
 			notifyDestroyed();
 		} else {
@@ -624,7 +745,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 		int index = suspendList.getSelectedIndex();
 		String selectedName = suspendName20[index];
 		
-		if (label == literal[8]) {
+		if (literal[8].equals(label)) {
 			try {
 				// update index:
 				String[] oldIndex = suspendName20;
@@ -640,7 +761,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 				showError(null, "error#2", e);
 			}
 			showResumeGame();
-		} else if (label == literal[9]) {
+		} else if (literal[9].equals(label)) {
 			try {
 				String oldName = selectedName;
 				String newName = suspendCounter++ + oldName.substring(oldName.indexOf(':'));
