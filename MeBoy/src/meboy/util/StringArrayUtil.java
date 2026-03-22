@@ -1,10 +1,10 @@
-package meboy;
+package meboy.util;
 
-final class StringArrayUtil {
+public final class StringArrayUtil {
 	private StringArrayUtil() {
 	}
 
-	static String[] append(String[] values, String value) {
+	public static String[] append(String[] values, String value) {
 		String[] source = values == null ? new String[0] : values;
 		String[] result = new String[source.length + 1];
 		System.arraycopy(source, 0, result, 0, source.length);
@@ -12,7 +12,7 @@ final class StringArrayUtil {
 		return result;
 	}
 
-	static String[] removeAt(String[] values, int index) {
+	public static String[] removeAt(String[] values, int index) {
 		if (values == null || index < 0 || index >= values.length) {
 			throw new ArrayIndexOutOfBoundsException(index);
 		}

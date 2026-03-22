@@ -1,14 +1,14 @@
-package meboy;
+package meboy.io;
 
 import javax.microedition.rms.RecordStore;
 import javax.microedition.rms.RecordStoreException;
 
-final class SuspendedGameStore {
+public final class SuspendedGameStore {
 	private static final String STORE_PREFIX = "20S_";
 
-	static final class SuspendedGameData {
-		final String cartID;
-		final byte[] state;
+	public static final class SuspendedGameData {
+		public final String cartID;
+		public final byte[] state;
 
 		SuspendedGameData(String cartID, byte[] state) {
 			this.cartID = cartID;
@@ -19,7 +19,7 @@ final class SuspendedGameStore {
 	private SuspendedGameStore() {
 	}
 
-	static void save(String suspendName, String cartID, byte[] state) throws RecordStoreException {
+	public static void save(String suspendName, String cartID, byte[] state) throws RecordStoreException {
 		if (suspendName == null || cartID == null || state == null || cartID.length() == 0 || state.length == 0) {
 			throw new RecordStoreException("Invalid suspended game payload");
 		}
@@ -39,7 +39,7 @@ final class SuspendedGameStore {
 		}
 	}
 
-	static SuspendedGameData load(String suspendName) throws RecordStoreException {
+	public static SuspendedGameData load(String suspendName) throws RecordStoreException {
 		RecordStore rs = null;
 		try {
 			rs = RecordStore.openRecordStore(STORE_PREFIX + suspendName, false);
@@ -57,12 +57,12 @@ final class SuspendedGameStore {
 		}
 	}
 
-	static void copy(String sourceName, String targetName) throws RecordStoreException {
+	public static void copy(String sourceName, String targetName) throws RecordStoreException {
 		SuspendedGameData data = load(sourceName);
 		save(targetName, data.cartID, data.state);
 	}
 
-	static void delete(String suspendName) throws RecordStoreException {
+	public static void delete(String suspendName) throws RecordStoreException {
 		RecordStore.deleteRecordStore(STORE_PREFIX + suspendName);
 	}
 

@@ -30,6 +30,7 @@ Place - Suite 330, Boston, MA 02111-1307, USA.
 
 import javax.microedition.lcdui.*;
 import javax.microedition.rms.*;
+import meboy.io.SuspendedGameStore;
 
 
 public class GBCanvas extends Canvas implements CommandListener {

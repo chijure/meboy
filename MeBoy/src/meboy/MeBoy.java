@@ -35,12 +35,20 @@ import javax.microedition.io.file.*;
 import javax.microedition.lcdui.*;
 import javax.microedition.midlet.*;
 import javax.microedition.rms.*;
+import meboy.app.AppInfo;
+import meboy.io.ExternalRomStore;
+import meboy.io.FileBrowserUtil;
+import meboy.io.SuspendedGameStore;
+import meboy.ui.FileBrowserController;
+import meboy.ui.ResumeGameController;
+import meboy.ui.SettingsController;
+import meboy.util.StringArrayUtil;
 
 /**
  * The main class offers a list of games, read from the file "carts.txt". It
  * also handles logging.
  */
-public class MeBoy extends MIDlet implements CommandListener {
+public class MeBoy extends MIDlet implements CommandListener, ResumeGameController.Host, SettingsController.Host, FileBrowserController.Host {
 	// Settings, etc.
 	public static final boolean debug = true;
 	public static int rotations = 0;
@@ -72,10 +80,6 @@ public class MeBoy extends MIDlet implements CommandListener {
 	private int numCarts;
 	private boolean fatalError;
 	private boolean fileSystemAvailable = false;
-	private boolean fileTaskRunning = false;
-	private javax.microedition.lcdui.List fileBrowserList;
-	private String currentBrowserPath = "file:///";
-	private final Vector browserEntries = new Vector();
 	
 	public static String logString = "";
 	private static MeBoy instance;
@@ -86,18 +90,9 @@ public class MeBoy extends MIDlet implements CommandListener {
 	private Form messageForm;
 	private GBCanvas gbCanvas;
 	private javax.microedition.lcdui.List cartList;
-	private javax.microedition.lcdui.List suspendList;
-	
-	// Settings
-	private Form settingsForm;
-	private TextField frameSkipField;
-	private TextField rotationField;
-	private TextField loadThresholdField;
-	private TextField scalingModeField;
-	private ChoiceGroup graphicsGroup;
-	private ChoiceGroup miscSettingsGroup;
-	private ChoiceGroup soundGroup;
-	private ChoiceGroup languageGroup;
+	private ResumeGameController resumeGameController;
+	private SettingsController settingsController;
+	private FileBrowserController fileBrowserController;
 	
 	private Bluetooth bluetooth;
 	
@@ -119,6 +114,9 @@ public class MeBoy extends MIDlet implements CommandListener {
 		
 		instance = this;
 		display = Display.getDisplay(this);
+		resumeGameController = new ResumeGameController(this);
+		settingsController = new SettingsController(this);
+		fileBrowserController = new FileBrowserController(this);
 
 		GBCanvas.readSettings();
 
@@ -621,7 +619,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 		}
 	}
 
-	private void showMainMenu() {
+	public void showMainMenu() {
 		mainMenu = new javax.microedition.lcdui.List(AppInfo.APP_TITLE, javax.microedition.lcdui.List.IMPLICIT);
 		if (numCarts > 0) {
 			mainMenu.append(literal[0], null);
@@ -654,11 +652,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 		} else if (literal[2].equals(item)) {
 			showSettings();
 		} else if (AppInfo.LOAD_SD_LABEL.equals(item)) {
-			runFileTask(new Runnable() {
-				public void run() {
-					showFileBrowser("file:///");
-				}
-			});
+			fileBrowserController.showRoot();
 		} else if (literal[4].equals(item)) {
 			bluetooth = new Bluetooth(this);
 		} else if (literal[5].equals(item)) {
@@ -709,159 +703,11 @@ public class MeBoy extends MIDlet implements CommandListener {
 	}
 
 	private void showResumeGame() {
-		if (suspendName20.length == 0) {
-			showMainMenu();
-			return;
-		}
-		suspendList = new javax.microedition.lcdui.List(literal[7], javax.microedition.lcdui.List.IMPLICIT);
-
-		for (int i = 0; i < suspendName20.length; i++) {
-			suspendList.append(suspendName20[i], null);
-		}
-		suspendList.addCommand(new Command(literal[8], Command.SCREEN, 2));
-		suspendList.addCommand(new Command(literal[9], Command.SCREEN, 2));
-		suspendList.addCommand(new Command(literal[10], Command.BACK, 1));
-		suspendList.setCommandListener(this);
-		display.setCurrent(suspendList);
-	}
-
-	private void resumeGameCommand(Command com) {
-		if (com.getCommandType() == Command.BACK) {
-			suspendList = null;
-			showMainMenu();
-			return;
-		}
-		
-		String label = com.getLabel();
-		int index = suspendList.getSelectedIndex();
-		String selectedName = suspendName20[index];
-		
-		if (literal[8].equals(label)) {
-			try {
-				// update index:
-				suspendName20 = StringArrayUtil.removeAt(suspendName20, index);
-				GBCanvas.writeSettings();
-
-				// delete the state itself
-				SuspendedGameStore.delete(selectedName);
-			} catch (Exception e) {
-				showError(null, "error#2", e);
-			}
-			showResumeGame();
-		} else if (literal[9].equals(label)) {
-			try {
-				String oldName = selectedName;
-				String newName = suspendCounter++ + oldName.substring(oldName.indexOf(':'));
-
-				SuspendedGameStore.copy(oldName, newName);
-
-				addSuspendedGame(newName);
-				showResumeGame();
-			} catch (Exception e) {
-				showError(null, "error#3", e);
-			}
-		} else {
-			try {
-				String suspendName = selectedName;
-				SuspendedGameStore.SuspendedGameData suspendedGame = SuspendedGameStore.load(suspendName);
-				String suspendCartID = suspendedGame.cartID;
-				byte[] suspendState = suspendedGame.state;
-				String suspendCartDisplayName = null;
-				for (int i = 0; i < numCarts; i++)
-					if (suspendCartID.equals(cartID[i]))
-						suspendCartDisplayName = cartDisplayName[i];
-				if (suspendCartDisplayName == null) {
-					showError(literal[11], suspendCartID, null);
-				} else {
-					gbCanvas = new GBCanvas(suspendCartID, this, suspendCartDisplayName,
-										suspendName, suspendState);
-					display.setCurrent(gbCanvas);
-				}
-				suspendList = null;
-			} catch (Exception e) {
-				showError(null, "error#4", e);
-			}
-		}
+		resumeGameController.show();
 	}
 
 	private void showSettings() {
-		settingsForm = new Form(literal[2]);
-
-		frameSkipField = new TextField(literal[12], "" + maxFrameSkip, 3, TextField.NUMERIC);
-		settingsForm.append(frameSkipField);
-		rotationField = new TextField(literal[13], "" + rotations, 2, TextField.NUMERIC);
-		settingsForm.append(rotationField);
-
-		graphicsGroup = new ChoiceGroup(literal[14], ChoiceGroup.MULTIPLE,
-				new String[]{literal[15], literal[16], literal[17]}, null);
-		graphicsGroup.setSelectedIndex(0, enableScaling);
-		graphicsGroup.setSelectedIndex(1, keepProportions);
-		graphicsGroup.setSelectedIndex(2, advancedGraphics);
-		settingsForm.append(graphicsGroup);
-		
-		scalingModeField = new TextField(literal[18], Integer.toString(scalingMode), 2, TextField.NUMERIC);
-		settingsForm.append(scalingModeField);
-
-		soundGroup = new ChoiceGroup(literal[19],
-				ChoiceGroup.MULTIPLE, new String[]{literal[20], literal[21]},
-				null);
-		soundGroup.setSelectedIndex(0, enableSound);
-		soundGroup.setSelectedIndex(1, advancedSound);
-		settingsForm.append(soundGroup);
-
-		languageGroup = new ChoiceGroup(literal[22], ChoiceGroup.EXCLUSIVE,
-				languages, null);
-		for (int i = 0; i < languages.length; i++)
-			languageGroup.setSelectedIndex(i, language == languageLookup[i]);
-		settingsForm.append(languageGroup);
-		
-		miscSettingsGroup = new ChoiceGroup(literal[23],
-				ChoiceGroup.MULTIPLE, new String[]{literal[24], literal[25]},
-				null);
-		miscSettingsGroup.setSelectedIndex(0, disableColor);
-		miscSettingsGroup.setSelectedIndex(1, showLogItem);
-		settingsForm.append(miscSettingsGroup);
-		
-		loadThresholdField = new TextField(literal[26], "" + lazyLoadingThreshold * 16, 5, TextField.NUMERIC);
-		settingsForm.append(loadThresholdField);
-
-		settingsForm.addCommand(new Command(literal[10], Command.BACK, 0));
-		settingsForm.addCommand(new Command(literal[27], Command.OK, 1));
-		settingsForm.setCommandListener(this);
-		display.setCurrent(settingsForm);
-	}
-
-	private void settingsCommand(Command com) {
-		if (com.getCommandType() == Command.BACK) {
-			settingsForm = null;
-			showMainMenu();
-			return;
-		}
-		
-		int f = Integer.parseInt(frameSkipField.getString());
-		maxFrameSkip = Math.max(Math.min(f, 59), 0);
-		rotations = Integer.parseInt(rotationField.getString()) & 3;
-		lazyLoadingThreshold = Math.max(Integer.parseInt(loadThresholdField.getString()) / 16, 20);
-		enableScaling = graphicsGroup.isSelected(0);
-		keepProportions = graphicsGroup.isSelected(1);
-		advancedGraphics = graphicsGroup.isSelected(2);
-		f = Integer.parseInt(scalingModeField.getString());
-		scalingMode = Math.max(Math.min(f, 3), 0);
-		disableColor = miscSettingsGroup.isSelected(0);
-		showLogItem = miscSettingsGroup.isSelected(1);
-		enableSound = soundGroup.isSelected(0);
-		advancedSound = soundGroup.isSelected(1);
-
-		int oldLanguage = language;
-		language = languageLookup[languageGroup.getSelectedIndex()];
-		
-		GBCanvas.writeSettings();
-		if (oldLanguage != language) {
-			readLiteralsFile();
-			cartList = null;
-		}
-		settingsForm = null;
-		showMainMenu();
+		settingsController.show();
 	}
 	
 	public void addSavegamesToList(javax.microedition.lcdui.List list, Vector cartIDs, Vector filenames) {
@@ -975,104 +821,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 		}
 	}
 
-	private void showFileBrowser(String path) {
-		currentBrowserPath = FileBrowserUtil.normalizeDirectoryPath(path);
-		fileBrowserList = new javax.microedition.lcdui.List(AppInfo.FILE_BROWSER_TITLE, javax.microedition.lcdui.List.IMPLICIT);
-		fileBrowserList.addCommand(new Command(literal[10], Command.BACK, 1));
-		fileBrowserList.setCommandListener(this);
-		browserEntries.removeAllElements();
-
-		try {
-			if (!"file:///".equals(currentBrowserPath)) {
-				fileBrowserList.append(AppInfo.BACK_DIR_LABEL, null);
-				browserEntries.addElement(AppInfo.BACK_DIR_LABEL);
-			}
-
-			if ("file:///".equals(currentBrowserPath)) {
-				Enumeration roots = FileSystemRegistry.listRoots();
-				while (roots.hasMoreElements()) {
-					String root = (String) roots.nextElement();
-					String url = FileBrowserUtil.normalizeDirectoryPath("file:///" + root);
-					fileBrowserList.append(root, null);
-					browserEntries.addElement(url);
-				}
-			} else {
-				FileConnection dir = (FileConnection) Connector.open(currentBrowserPath, Connector.READ);
-				try {
-					if (!dir.exists() || !dir.isDirectory()) {
-						throw new IOException("Invalid directory: " + currentBrowserPath);
-					}
-
-					Vector dirs = new Vector();
-					Vector files = new Vector();
-					Enumeration entries = dir.list();
-					while (entries.hasMoreElements()) {
-						String entry = (String) entries.nextElement();
-						String full = currentBrowserPath + entry;
-						if (entry.endsWith("/")) {
-							dirs.addElement(full);
-						} else if (FileBrowserUtil.isRomFile(entry)) {
-							files.addElement(full);
-						}
-					}
-					FileBrowserUtil.sortStrings(dirs);
-					FileBrowserUtil.sortStrings(files);
-
-					for (int i = 0; i < dirs.size(); i++) {
-						String full = (String) dirs.elementAt(i);
-						fileBrowserList.append(full.substring(currentBrowserPath.length()), null);
-						browserEntries.addElement(full);
-					}
-					for (int i = 0; i < files.size(); i++) {
-						String full = (String) files.elementAt(i);
-						fileBrowserList.append(full.substring(currentBrowserPath.length()), null);
-						browserEntries.addElement(full);
-					}
-				} finally {
-					dir.close();
-				}
-			}
-
-			display.setCurrent(fileBrowserList);
-		} catch (Exception e) {
-			showError(AppInfo.FILE_BROWSER_OPEN_ERROR, currentBrowserPath, e);
-			showMainMenu();
-		}
-	}
-
-	private void fileBrowserCommand(Command com) {
-		if (com.getCommandType() == Command.BACK) {
-			fileBrowserList = null;
-			showMainMenu();
-			return;
-		}
-
-		int index = fileBrowserList.getSelectedIndex();
-		if (index < 0 || index >= browserEntries.size()) {
-			return;
-		}
-		String selected = (String) browserEntries.elementAt(index);
-		final String selectedEntry = selected;
-		runFileTask(new Runnable() {
-			public void run() {
-				handleFileBrowserSelection(selectedEntry);
-			}
-		});
-	}
-
-	private void handleFileBrowserSelection(String selected) {
-		if (AppInfo.BACK_DIR_LABEL.equals(selected)) {
-			showFileBrowser(FileBrowserUtil.parentDirectory(currentBrowserPath));
-			return;
-		}
-		if (selected.endsWith("/")) {
-			showFileBrowser(selected);
-			return;
-		}
-		loadRomFromFile(selected);
-	}
-
-	private void loadRomFromFile(String fileUrl) {
+	public void openExternalRom(String fileUrl) {
 		try {
 			String displayName = fileUrl;
 			int lastSlash = fileUrl.lastIndexOf('/');
@@ -1085,7 +834,6 @@ public class MeBoy extends MIDlet implements CommandListener {
 			showWaitForm(AppInfo.WAIT_LOADING_ROM_MESSAGE);
 
 			gbCanvas = new GBCanvas(externalCartID, this, displayName);
-			fileBrowserList = null;
 			display.setCurrent(gbCanvas);
 		} catch (OutOfMemoryError oom) {
 			showError(AppInfo.ROM_LOAD_MEMORY_ERROR, fileUrl, oom);
@@ -1094,64 +842,12 @@ public class MeBoy extends MIDlet implements CommandListener {
 		}
 	}
 
-	private void showWaitForm(String message) {
+	public void showWaitForm(String message) {
 		Form wait = new Form(AppInfo.WAIT_FORM_TITLE);
 		wait.append(message);
 		display.setCurrent(wait);
 	}
 
-	private static int getLoadableRomLimitByMemory() {
-		try {
-			System.gc();
-			long free = Runtime.getRuntime().freeMemory();
-			if (free <= 0) {
-				return 256 * 1024;
-			}
-			long safe = (free * 2) / 3;
-			if (safe < 256 * 1024) {
-				safe = 256 * 1024;
-			}
-			if (safe > AppInfo.MAX_EXTERNAL_ROM_SIZE) {
-				safe = AppInfo.MAX_EXTERNAL_ROM_SIZE;
-			}
-			return (int) safe;
-		} catch (Throwable t) {
-			return 512 * 1024;
-		}
-	}
-
-	private static String formatBytes(long bytes) {
-		if (bytes < 1024) {
-			return bytes + " B";
-		}
-		long kb = bytes / 1024;
-		if (kb < 1024) {
-			return kb + " KB";
-		}
-		long mbTimes100 = (bytes * 100) / (1024 * 1024);
-		return (mbTimes100 / 100) + "." + ((mbTimes100 / 10) % 10) + " MB";
-	}
-
-	private void runFileTask(final Runnable action) {
-		if (fileTaskRunning) {
-			return;
-		}
-		fileTaskRunning = true;
-		showWaitForm(AppInfo.WAIT_STORAGE_MESSAGE);
-
-		new Thread(new Runnable() {
-			public void run() {
-				try {
-					action.run();
-				} catch (Throwable t) {
-					showError(AppInfo.FILE_OPERATION_ERROR, null, t);
-				} finally {
-					fileTaskRunning = false;
-				}
-			}
-		}).start();
-	}
-	
 	public void commandAction(Command com, Displayable s) {
 		if (s == messageForm)
 			messageCommand();
@@ -1159,12 +855,12 @@ public class MeBoy extends MIDlet implements CommandListener {
 			mainMenuCommand(com);
 		else if (s == cartList)
 			cartListCommand(com);
-		else if (s == suspendList)
-			resumeGameCommand(com);
-		else if (s == settingsForm)
-			settingsCommand(com);
-		else if (s == fileBrowserList)
-			fileBrowserCommand(com);
+		else if (resumeGameController.handles(s))
+			resumeGameController.commandAction(com, s);
+		else if (settingsController.handles(s))
+			settingsController.commandAction(com, s);
+		else if (fileBrowserController.handles(s))
+			fileBrowserController.commandAction(com, s);
 	}
 
 	public static void log(String s) {
@@ -1175,6 +871,62 @@ public class MeBoy extends MIDlet implements CommandListener {
 		if (debug) {
 			System.out.println(s);
 		}
+	}
+
+	public Display getDisplay() {
+		return display;
+	}
+
+	public String getLiteral(int index) {
+		return literal[index];
+	}
+
+	public String[] getLanguages() {
+		return languages;
+	}
+
+	public int[] getLanguageLookup() {
+		return languageLookup;
+	}
+
+	public void reloadLiterals() {
+		readLiteralsFile();
+		cartList = null;
+	}
+
+	public void showErrorMessage(String message, String details, Throwable exception) {
+		showError(message, details, exception);
+	}
+
+	public String[] getSuspendedNames() {
+		return suspendName20;
+	}
+
+	public void removeSuspendedGameAt(int index) {
+		suspendName20 = StringArrayUtil.removeAt(suspendName20, index);
+		GBCanvas.writeSettings();
+	}
+
+	public void appendSuspendedGame(String name) {
+		addSuspendedGame(name);
+	}
+
+	public String resolveCartDisplayName(String suspendCartID) {
+		for (int i = 0; i < numCarts; i++) {
+			if (suspendCartID.equals(cartID[i])) {
+				return cartDisplayName[i];
+			}
+		}
+		return null;
+	}
+
+	public void openSuspendedGame(String suspendCartID, String suspendCartDisplayName, String suspendName, byte[] suspendState) {
+		gbCanvas = new GBCanvas(suspendCartID, this, suspendCartDisplayName, suspendName, suspendState);
+		display.setCurrent(gbCanvas);
+	}
+
+	public int nextSuspendCounter() {
+		return suspendCounter++;
 	}
 	
 	public static void addGameRAM(String name, byte[] data) {

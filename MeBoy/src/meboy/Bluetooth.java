@@ -34,6 +34,7 @@ import javax.bluetooth.*;
 import javax.microedition.io.*;
 import javax.microedition.lcdui.*;
 import javax.microedition.rms.*;
+import meboy.io.SuspendedGameStore;
 
 
 public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {

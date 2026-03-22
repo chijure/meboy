@@ -1,12 +1,12 @@
-package meboy;
+package meboy.io;
 
 import java.util.Vector;
 
-final class FileBrowserUtil {
+public final class FileBrowserUtil {
 	private FileBrowserUtil() {
 	}
 
-	static void sortStrings(Vector items) {
+	public static void sortStrings(Vector items) {
 		for (int i = 1; i < items.size(); i++) {
 			String value = (String) items.elementAt(i);
 			int j = i - 1;
@@ -18,7 +18,7 @@ final class FileBrowserUtil {
 		}
 	}
 
-	static String normalizeDirectoryPath(String path) {
+	public static String normalizeDirectoryPath(String path) {
 		if (path == null || path.length() == 0) {
 			return "file:///";
 		}
@@ -28,7 +28,7 @@ final class FileBrowserUtil {
 		return path;
 	}
 
-	static String parentDirectory(String path) {
+	public static String parentDirectory(String path) {
 		path = normalizeDirectoryPath(path);
 		if ("file:///".equals(path)) {
 			return path;
@@ -41,12 +41,12 @@ final class FileBrowserUtil {
 		return trimmed.substring(0, cut + 1);
 	}
 
-	static boolean isRomFile(String name) {
+	public static boolean isRomFile(String name) {
 		String lower = name.toLowerCase();
 		return lower.endsWith(".gb") || lower.endsWith(".gbc") || lower.endsWith(".cgb");
 	}
 
-	static String buildExternalCartID(String fileUrl) {
+	public static String buildExternalCartID(String fileUrl) {
 		int hash = fileUrl.hashCode();
 		if (hash < 0) {
 			hash = -hash;
