@@ -29,7 +29,7 @@ echo Manifest-Version: 1.0
 echo MIDlet-1: MeBoy, meboy.png, MeBoy
 echo MIDlet-Name: MeBoy
 echo MIDlet-Vendor: Bjorn Carlin, www.arktos.se
-echo MIDlet-Version: 2.3.0
+echo MIDlet-Version: 2.4.0
 echo MIDlet-Description: Gameboy emulator for J2ME
 echo MicroEdition-Configuration: CLDC-1.1
 echo MicroEdition-Profile: MIDP-2.0
@@ -49,7 +49,7 @@ echo Writing JAD...
 echo MIDlet-1: MeBoy, meboy.png, MeBoy
 echo MIDlet-Name: MeBoy
 echo MIDlet-Vendor: Bjorn Carlin, www.arktos.se
-echo MIDlet-Version: 2.3.0
+echo MIDlet-Version: 2.4.0
 echo MIDlet-Description: Gameboy emulator for J2ME
 echo MicroEdition-Configuration: CLDC-1.1
 echo MicroEdition-Profile: MIDP-2.0

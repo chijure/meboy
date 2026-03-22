@@ -68,7 +68,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 	private static int[] languageLookup = new int[] {0};
 	private static final String LOAD_SD_LABEL = "Load ROM from SD";
 	private static final String BACK_DIR_LABEL = "..";
-	private static final String APP_TITLE = "MeBoy 2.3";
+	private static final String APP_TITLE = "MeBoy 2.4";
 	private static final String ABOUT_MESSAGE = APP_TITLE + " \u00A9 Bj\u00F6rn Carlin, 2005-2009.\n"
 			+ "Additional development: Juan Reategui Solis (chijure)\n"
 			+ "http://arktos.se/meboy/";
