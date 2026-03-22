@@ -455,11 +455,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 		for (int k = 0; k < numCarts; k++) {
 			if (cartFileNameTemp.equals(cartFileName[k])) {
 				// remove suspended game from 1.0-style index:
-				String[] oldNameIndex = suspendName10;
-				suspendName10 = new String[oldNameIndex.length - 1];
-				System.arraycopy(oldNameIndex, 0, suspendName10, 0, index);
-				System.arraycopy(oldNameIndex, index + 1, suspendName10, index,
-						suspendName10.length - index);
+				suspendName10 = StringArrayUtil.removeAt(suspendName10, index);
 				suspendName10Shrunk = true;
 				GBCanvas.writeSettings();
 
@@ -761,11 +757,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 		if (literal[8].equals(label)) {
 			try {
 				// update index:
-				String[] oldIndex = suspendName20;
-				suspendName20 = new String[oldIndex.length - 1];
-				System.arraycopy(oldIndex, 0, suspendName20, 0, index);
-				System.arraycopy(oldIndex, index + 1, suspendName20, index,
-						suspendName20.length - index);
+				suspendName20 = StringArrayUtil.removeAt(suspendName20, index);
 				GBCanvas.writeSettings();
 
 				// delete the state itself
@@ -1280,10 +1272,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 
 	// name should include number prefix
 	public static void addSuspendedGame(String name) {
-		String[] oldIndex = suspendName20;
-		suspendName20 = new String[oldIndex.length + 1];
-		System.arraycopy(oldIndex, 0, suspendName20, 0, oldIndex.length);
-		suspendName20[oldIndex.length] = name;
+		suspendName20 = StringArrayUtil.append(suspendName20, name);
 		GBCanvas.writeSettings();
 	}
 
