@@ -296,10 +296,9 @@ public class Bluetooth implements DiscoveryListener, CommandListener, Runnable {
 		suspendgameList = null;
 		
 		try {
-			RecordStore rs = RecordStore.openRecordStore("20S_" + savegameDisplayName, false);
-			savegameCartID = new String(rs.getRecord(1));
-			savegameData = rs.getRecord(2);
-			rs.closeRecordStore();
+			SuspendedGameStore.SuspendedGameData suspendedGame = SuspendedGameStore.load(savegameDisplayName);
+			savegameCartID = suspendedGame.cartID;
+			savegameData = suspendedGame.state;
 			
 			int ix = savegameDisplayName.indexOf(':');
 			if (ix > 0)

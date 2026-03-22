@@ -756,7 +756,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 				GBCanvas.writeSettings();
 
 				// delete the state itself
-				RecordStore.deleteRecordStore("20S_" + selectedName);
+				SuspendedGameStore.delete(selectedName);
 			} catch (Exception e) {
 				showError(null, "error#2", e);
 			}
@@ -766,16 +766,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 				String oldName = selectedName;
 				String newName = suspendCounter++ + oldName.substring(oldName.indexOf(':'));
 
-				RecordStore rs = RecordStore.openRecordStore("20S_" + oldName,
-						true);
-				byte[] b1 = rs.getRecord(1); // cartid
-				byte[] b2 = rs.getRecord(2); // data
-				rs.closeRecordStore();
-
-				rs = RecordStore.openRecordStore("20S_" + newName, true);
-				rs.addRecord(b1, 0, b1.length);
-				rs.addRecord(b2, 0, b2.length);
-				rs.closeRecordStore();
+				SuspendedGameStore.copy(oldName, newName);
 
 				addSuspendedGame(newName);
 				showResumeGame();
@@ -785,10 +776,9 @@ public class MeBoy extends MIDlet implements CommandListener {
 		} else {
 			try {
 				String suspendName = selectedName;
-				RecordStore rs = RecordStore.openRecordStore("20S_" + suspendName, false);
-				String suspendCartID = new String(rs.getRecord(1));
-				byte[] suspendState = rs.getRecord(2);
-				rs.closeRecordStore();
+				SuspendedGameStore.SuspendedGameData suspendedGame = SuspendedGameStore.load(suspendName);
+				String suspendCartID = suspendedGame.cartID;
+				byte[] suspendState = suspendedGame.state;
 				String suspendCartDisplayName = null;
 				for (int i = 0; i < numCarts; i++)
 					if (suspendCartID.equals(cartID[i]))
@@ -984,17 +974,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 				try {
 					String suspendName = (MeBoy.suspendCounter++) + ": " + gameDisplayName;
 					
-					RecordStore rs = RecordStore.openRecordStore("20S_" + suspendName, true);
-
-					if (rs.getNumRecords() == 0) {
-						rs.addRecord(gameCartID.getBytes(), 0, gameCartID.length());
-						rs.addRecord(savegame, 0, savegame.length);
-					} else {
-						rs.setRecord(1, gameCartID.getBytes(), 0, gameCartID.length());
-						rs.setRecord(2, savegame, 0, savegame.length);
-					}
-
-					rs.closeRecordStore();
+					SuspendedGameStore.save(suspendName, gameCartID, savegame);
 					addSuspendedGame(suspendName);
 					showMessage(literal[4], literal[58]);
 				} catch (Exception e) {

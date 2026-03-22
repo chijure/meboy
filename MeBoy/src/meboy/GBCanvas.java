@@ -570,19 +570,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 				suspendName = (MeBoy.suspendCounter++) + ": " + cartDisplayName;
 				insertIndex = true;
 			}
-			RecordStore rs = RecordStore.openRecordStore("20S_" + suspendName, true);
-			
-			byte[] b = cpu.flatten();
-			
-			if (rs.getNumRecords() == 0) {
-				rs.addRecord(cartID.getBytes(), 0, cartID.length());
-				rs.addRecord(b, 0, b.length);
-			} else {
-				rs.setRecord(1, cartID.getBytes(), 0, cartID.length());
-				rs.setRecord(2, b, 0, b.length);
-			}
-			
-			rs.closeRecordStore();
+			SuspendedGameStore.save(suspendName, cartID, cpu.flatten());
 			if (insertIndex)
 				MeBoy.addSuspendedGame(suspendName);
 		} catch (Exception e) {
