@@ -66,24 +66,6 @@ public class MeBoy extends MIDlet implements CommandListener {
 	private static int languageCount = 1;
 	private static String[] languages = new String[] {"English"}; // if index.txt fails
 	private static int[] languageLookup = new int[] {0};
-	private static final String LOAD_SD_LABEL = "Load ROM from SD";
-	private static final String BACK_DIR_LABEL = "..";
-	private static final String APP_TITLE = "MeBoy 2.4";
-	private static final String ABOUT_MESSAGE = APP_TITLE + " \u00A9 Bj\u00F6rn Carlin, 2005-2009.\n"
-			+ "Additional development: Juan Reategui Solis (chijure)\n"
-			+ "http://arktos.se/meboy/";
-	private static final String FILE_BROWSER_TITLE = "Select ROM";
-	private static final String WAIT_FORM_TITLE = "MeBoy";
-	private static final String WAIT_STORAGE_MESSAGE = "Opening storage...";
-	private static final String WAIT_LOADING_ROM_MESSAGE = "Loading ROM...";
-	private static final String NO_BUNDLED_ROMS_MESSAGE = "No bundled ROMs found. Use \"";
-	private static final String FILE_BROWSER_OPEN_ERROR = "Could not open file browser.";
-	private static final String ROM_LOAD_MEMORY_ERROR = "Not enough memory to load ROM.";
-	private static final String ROM_LOAD_ERROR = "Could not load ROM from storage.";
-	private static final String FILE_OPERATION_ERROR = "File operation failed.";
-	private static final int MAX_EXTERNAL_ROM_SIZE = 4 * 1024 * 1024;
-	private static final Hashtable externalRoms = new Hashtable();
-	private static final Hashtable externalRomFiles = new Hashtable();
 	private String[] cartDisplayName = null;
 	private String[] cartFileName = null;
 	private String[] cartID = null;
@@ -640,12 +622,12 @@ public class MeBoy extends MIDlet implements CommandListener {
 	}
 
 	private void showMainMenu() {
-		mainMenu = new javax.microedition.lcdui.List(APP_TITLE, javax.microedition.lcdui.List.IMPLICIT);
+		mainMenu = new javax.microedition.lcdui.List(AppInfo.APP_TITLE, javax.microedition.lcdui.List.IMPLICIT);
 		if (numCarts > 0) {
 			mainMenu.append(literal[0], null);
 		}
 		if (fileSystemAvailable) {
-			mainMenu.append(LOAD_SD_LABEL, null);
+			mainMenu.append(AppInfo.LOAD_SD_LABEL, null);
 		}
 		if (suspendName20.length > 0) {
 			mainMenu.append(literal[1], null);
@@ -671,7 +653,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 			showResumeGame();
 		} else if (literal[2].equals(item)) {
 			showSettings();
-		} else if (LOAD_SD_LABEL.equals(item)) {
+		} else if (AppInfo.LOAD_SD_LABEL.equals(item)) {
 			runFileTask(new Runnable() {
 				public void run() {
 					showFileBrowser("file:///");
@@ -680,7 +662,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 		} else if (literal[4].equals(item)) {
 			bluetooth = new Bluetooth(this);
 		} else if (literal[5].equals(item)) {
-			showMessage(literal[5], ABOUT_MESSAGE);
+			showMessage(literal[5], AppInfo.ABOUT_MESSAGE);
 		} else if (literal[3].equals(item)) {
 			log(literal[29] + " " + Runtime.getRuntime().freeMemory() + "/" + Runtime.getRuntime().totalMemory());
 			showLog();
@@ -694,7 +676,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 
 	private void showCartList() {
 		if (numCarts == 0) {
-			showMessage("MeBoy", NO_BUNDLED_ROMS_MESSAGE + LOAD_SD_LABEL + "\" from the main menu.");
+			showMessage("MeBoy", AppInfo.NO_BUNDLED_ROMS_MESSAGE + AppInfo.LOAD_SD_LABEL + "\" from the main menu.");
 			return;
 		}
 		cartList = new javax.microedition.lcdui.List(literal[7], javax.microedition.lcdui.List.IMPLICIT);
@@ -994,23 +976,23 @@ public class MeBoy extends MIDlet implements CommandListener {
 	}
 
 	private void showFileBrowser(String path) {
-		currentBrowserPath = normalizeDirectoryPath(path);
-		fileBrowserList = new javax.microedition.lcdui.List(FILE_BROWSER_TITLE, javax.microedition.lcdui.List.IMPLICIT);
+		currentBrowserPath = FileBrowserUtil.normalizeDirectoryPath(path);
+		fileBrowserList = new javax.microedition.lcdui.List(AppInfo.FILE_BROWSER_TITLE, javax.microedition.lcdui.List.IMPLICIT);
 		fileBrowserList.addCommand(new Command(literal[10], Command.BACK, 1));
 		fileBrowserList.setCommandListener(this);
 		browserEntries.removeAllElements();
 
 		try {
 			if (!"file:///".equals(currentBrowserPath)) {
-				fileBrowserList.append(BACK_DIR_LABEL, null);
-				browserEntries.addElement(BACK_DIR_LABEL);
+				fileBrowserList.append(AppInfo.BACK_DIR_LABEL, null);
+				browserEntries.addElement(AppInfo.BACK_DIR_LABEL);
 			}
 
 			if ("file:///".equals(currentBrowserPath)) {
 				Enumeration roots = FileSystemRegistry.listRoots();
 				while (roots.hasMoreElements()) {
 					String root = (String) roots.nextElement();
-					String url = normalizeDirectoryPath("file:///" + root);
+					String url = FileBrowserUtil.normalizeDirectoryPath("file:///" + root);
 					fileBrowserList.append(root, null);
 					browserEntries.addElement(url);
 				}
@@ -1029,12 +1011,12 @@ public class MeBoy extends MIDlet implements CommandListener {
 						String full = currentBrowserPath + entry;
 						if (entry.endsWith("/")) {
 							dirs.addElement(full);
-						} else if (isRomFile(entry)) {
+						} else if (FileBrowserUtil.isRomFile(entry)) {
 							files.addElement(full);
 						}
 					}
-					sortStrings(dirs);
-					sortStrings(files);
+					FileBrowserUtil.sortStrings(dirs);
+					FileBrowserUtil.sortStrings(files);
 
 					for (int i = 0; i < dirs.size(); i++) {
 						String full = (String) dirs.elementAt(i);
@@ -1053,7 +1035,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 
 			display.setCurrent(fileBrowserList);
 		} catch (Exception e) {
-			showError(FILE_BROWSER_OPEN_ERROR, currentBrowserPath, e);
+			showError(AppInfo.FILE_BROWSER_OPEN_ERROR, currentBrowserPath, e);
 			showMainMenu();
 		}
 	}
@@ -1079,8 +1061,8 @@ public class MeBoy extends MIDlet implements CommandListener {
 	}
 
 	private void handleFileBrowserSelection(String selected) {
-		if (BACK_DIR_LABEL.equals(selected)) {
-			showFileBrowser(parentDirectory(currentBrowserPath));
+		if (AppInfo.BACK_DIR_LABEL.equals(selected)) {
+			showFileBrowser(FileBrowserUtil.parentDirectory(currentBrowserPath));
 			return;
 		}
 		if (selected.endsWith("/")) {
@@ -1098,82 +1080,24 @@ public class MeBoy extends MIDlet implements CommandListener {
 				displayName = fileUrl.substring(lastSlash + 1);
 			}
 
-			String externalCartID = buildExternalCartID(fileUrl);
+			String externalCartID = FileBrowserUtil.buildExternalCartID(fileUrl);
 			registerExternalRomFile(externalCartID, fileUrl);
-			showWaitForm(WAIT_LOADING_ROM_MESSAGE);
+			showWaitForm(AppInfo.WAIT_LOADING_ROM_MESSAGE);
 
 			gbCanvas = new GBCanvas(externalCartID, this, displayName);
 			fileBrowserList = null;
 			display.setCurrent(gbCanvas);
 		} catch (OutOfMemoryError oom) {
-			showError(ROM_LOAD_MEMORY_ERROR, fileUrl, oom);
+			showError(AppInfo.ROM_LOAD_MEMORY_ERROR, fileUrl, oom);
 		} catch (Exception e) {
-			showError(ROM_LOAD_ERROR, fileUrl, e);
+			showError(AppInfo.ROM_LOAD_ERROR, fileUrl, e);
 		}
-	}
-
-	private static void sortStrings(Vector items) {
-		for (int i = 1; i < items.size(); i++) {
-			String value = (String) items.elementAt(i);
-			int j = i - 1;
-			while (j >= 0 && compareIgnoreCase((String) items.elementAt(j), value) > 0) {
-				items.setElementAt(items.elementAt(j), j + 1);
-				j--;
-			}
-			items.setElementAt(value, j + 1);
-		}
-	}
-
-	private static int compareIgnoreCase(String left, String right) {
-		if (left == null) {
-			return right == null ? 0 : -1;
-		}
-		if (right == null) {
-			return 1;
-		}
-		return left.toLowerCase().compareTo(right.toLowerCase());
 	}
 
 	private void showWaitForm(String message) {
-		Form wait = new Form(WAIT_FORM_TITLE);
+		Form wait = new Form(AppInfo.WAIT_FORM_TITLE);
 		wait.append(message);
 		display.setCurrent(wait);
-	}
-
-	private static String normalizeDirectoryPath(String path) {
-		if (path == null || path.length() == 0) {
-			return "file:///";
-		}
-		if (!path.endsWith("/")) {
-			return path + "/";
-		}
-		return path;
-	}
-
-	private static String parentDirectory(String path) {
-		path = normalizeDirectoryPath(path);
-		if ("file:///".equals(path)) {
-			return path;
-		}
-		String trimmed = path.substring(0, path.length() - 1);
-		int cut = trimmed.lastIndexOf('/');
-		if (cut <= "file://".length()) {
-			return "file:///";
-		}
-		return trimmed.substring(0, cut + 1);
-	}
-
-	private static boolean isRomFile(String name) {
-		String lower = name.toLowerCase();
-		return lower.endsWith(".gb") || lower.endsWith(".gbc") || lower.endsWith(".cgb");
-	}
-
-	private static String buildExternalCartID(String fileUrl) {
-		int hash = fileUrl.hashCode();
-		if (hash < 0) {
-			hash = -hash;
-		}
-		return "ext_" + hash;
 	}
 
 	private static int getLoadableRomLimitByMemory() {
@@ -1187,8 +1111,8 @@ public class MeBoy extends MIDlet implements CommandListener {
 			if (safe < 256 * 1024) {
 				safe = 256 * 1024;
 			}
-			if (safe > MAX_EXTERNAL_ROM_SIZE) {
-				safe = MAX_EXTERNAL_ROM_SIZE;
+			if (safe > AppInfo.MAX_EXTERNAL_ROM_SIZE) {
+				safe = AppInfo.MAX_EXTERNAL_ROM_SIZE;
 			}
 			return (int) safe;
 		} catch (Throwable t) {
@@ -1213,14 +1137,14 @@ public class MeBoy extends MIDlet implements CommandListener {
 			return;
 		}
 		fileTaskRunning = true;
-		showWaitForm(WAIT_STORAGE_MESSAGE);
+		showWaitForm(AppInfo.WAIT_STORAGE_MESSAGE);
 
 		new Thread(new Runnable() {
 			public void run() {
 				try {
 					action.run();
 				} catch (Throwable t) {
-					showError(FILE_OPERATION_ERROR, null, t);
+					showError(AppInfo.FILE_OPERATION_ERROR, null, t);
 				} finally {
 					fileTaskRunning = false;
 				}
@@ -1277,33 +1201,19 @@ public class MeBoy extends MIDlet implements CommandListener {
 	}
 
 	public static void registerExternalRom(String cartName, byte[] romData) {
-		if (cartName == null || romData == null) {
-			return;
-		}
-		externalRoms.put(cartName, romData);
+		ExternalRomStore.registerRom(cartName, romData);
 	}
 
 	public static byte[] takeExternalRom(String cartName) {
-		byte[] data = (byte[]) externalRoms.get(cartName);
-		if (data != null) {
-			externalRoms.remove(cartName);
-		}
-		return data;
+		return ExternalRomStore.takeRom(cartName);
 	}
 
 	public static void registerExternalRomFile(String cartName, String fileUrl) {
-		if (cartName == null || fileUrl == null) {
-			return;
-		}
-		externalRomFiles.put(cartName, fileUrl);
+		ExternalRomStore.registerRomFile(cartName, fileUrl);
 	}
 
 	public static String takeExternalRomFile(String cartName) {
-		String path = (String) externalRomFiles.get(cartName);
-		if (path != null) {
-			externalRomFiles.remove(cartName);
-		}
-		return path;
+		return ExternalRomStore.takeRomFile(cartName);
 	}
 	
 	private int findMatch(String match, String[] list, boolean fuzzy) {
