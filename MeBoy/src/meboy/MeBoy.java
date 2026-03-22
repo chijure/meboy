@@ -68,6 +68,10 @@ public class MeBoy extends MIDlet implements CommandListener {
 	private static int[] languageLookup = new int[] {0};
 	private static final String LOAD_SD_LABEL = "Load ROM from SD";
 	private static final String BACK_DIR_LABEL = "..";
+	private static final String APP_TITLE = "MeBoy 2.3";
+	private static final String ABOUT_MESSAGE = APP_TITLE + " \u00A9 Bj\u00F6rn Carlin, 2005-2009.\n"
+			+ "Additional development: Juan Reategui Solis (chijure)\n"
+			+ "http://arktos.se/meboy/";
 	private static final String FILE_BROWSER_TITLE = "Select ROM";
 	private static final String WAIT_FORM_TITLE = "MeBoy";
 	private static final String WAIT_STORAGE_MESSAGE = "Opening storage...";
@@ -640,7 +644,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 	}
 
 	private void showMainMenu() {
-		mainMenu = new javax.microedition.lcdui.List("MeBoy 2.3", javax.microedition.lcdui.List.IMPLICIT);
+		mainMenu = new javax.microedition.lcdui.List(APP_TITLE, javax.microedition.lcdui.List.IMPLICIT);
 		if (numCarts > 0) {
 			mainMenu.append(literal[0], null);
 		}
@@ -680,7 +684,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 		} else if (literal[4].equals(item)) {
 			bluetooth = new Bluetooth(this);
 		} else if (literal[5].equals(item)) {
-			showMessage(literal[5], "MeBoy 2.3 © Björn Carlin, 2005-2009.\nhttp://arktos.se/meboy/");
+			showMessage(literal[5], ABOUT_MESSAGE);
 		} else if (literal[3].equals(item)) {
 			log(literal[29] + " " + Runtime.getRuntime().freeMemory() + "/" + Runtime.getRuntime().totalMemory());
 			showLog();
