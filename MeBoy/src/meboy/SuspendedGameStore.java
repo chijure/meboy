@@ -20,6 +20,9 @@ final class SuspendedGameStore {
 	}
 
 	static void save(String suspendName, String cartID, byte[] state) throws RecordStoreException {
+		if (suspendName == null || cartID == null || state == null || cartID.length() == 0 || state.length == 0) {
+			throw new RecordStoreException("Invalid suspended game payload");
+		}
 		RecordStore rs = null;
 		try {
 			rs = RecordStore.openRecordStore(STORE_PREFIX + suspendName, true);
@@ -40,7 +43,15 @@ final class SuspendedGameStore {
 		RecordStore rs = null;
 		try {
 			rs = RecordStore.openRecordStore(STORE_PREFIX + suspendName, false);
-			return new SuspendedGameData(new String(rs.getRecord(1)), rs.getRecord(2));
+			if (rs.getNumRecords() < 2) {
+				throw new RecordStoreException("Corrupt suspended game store: missing records");
+			}
+			byte[] cartIDBytes = rs.getRecord(1);
+			byte[] state = rs.getRecord(2);
+			if (cartIDBytes == null || cartIDBytes.length == 0 || state == null || state.length == 0) {
+				throw new RecordStoreException("Corrupt suspended game store: empty cart ID or state");
+			}
+			return new SuspendedGameData(new String(cartIDBytes), state);
 		} finally {
 			closeQuietly(rs);
 		}

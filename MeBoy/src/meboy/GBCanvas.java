@@ -351,10 +351,54 @@ public class GBCanvas extends Canvas implements CommandListener {
 		r = (r << 8) + (b[i++] & 0xFF);
 		return (r << 8) + (b[i++] & 0xFF);
 	}
+
+	private static boolean hasRange(byte[] b, int index, int length) {
+		return b != null && index >= 0 && length >= 0 && index <= b.length - length;
+	}
+
+	private static int getIntChecked(byte[] b, int index, String field) throws Exception {
+		if (!hasRange(b, index, 4)) {
+			throw new Exception("Corrupt settings store: missing " + field + " at " + index);
+		}
+		return getInt(b, index);
+	}
+
+	private static String readByteString(byte[] b, int[] indexRef, String field) throws Exception {
+		int index = indexRef[0];
+		if (!hasRange(b, index, 1)) {
+			throw new Exception("Corrupt settings store: missing length for " + field);
+		}
+		int length = b[index++] & 0xFF;
+		if (!hasRange(b, index, length)) {
+			throw new Exception("Corrupt settings store: invalid length for " + field + ": " + length);
+		}
+		String value = new String(b, index, length);
+		indexRef[0] = index + length;
+		return value;
+	}
+
+	private static String readUtf16String(byte[] b, int[] indexRef, String field) throws Exception {
+		int index = indexRef[0];
+		if (!hasRange(b, index, 1)) {
+			throw new Exception("Corrupt settings store: missing UTF-16 length for " + field);
+		}
+		int length = b[index++] & 0xFF;
+		if (!hasRange(b, index, length * 2)) {
+			throw new Exception("Corrupt settings store: invalid UTF-16 length for " + field + ": " + length);
+		}
+		char[] chars = new char[length];
+		for (int i = 0; i < length; i++) {
+			chars[i] += (b[index++] & 0xFF) << 8;
+			chars[i] += (b[index++] & 0xFF);
+		}
+		indexRef[0] = index;
+		return new String(chars);
+	}
 	
 	public static final void writeSettings() {
+		RecordStore rs = null;
 		try {
-			RecordStore rs = RecordStore.openRecordStore("set", true);
+			rs = RecordStore.openRecordStore("set", true);
 			
 			int bLength = 55;
 			for (int i = 0; i < MeBoy.suspendName10.length; i++)
@@ -404,47 +448,56 @@ public class GBCanvas extends Canvas implements CommandListener {
 			} else {
 				rs.setRecord(1, b, 0, bLength);
 			}
-			rs.closeRecordStore();
 		} catch (Exception e) {
 			if (MeBoy.debug) {
 				e.printStackTrace();
 			}
 			MeBoy.log(e.toString());
+		} finally {
+			try {
+				if (rs != null)
+					rs.closeRecordStore();
+			} catch (Exception e) {
+			}
 		}
 	}
 	
 	public static final void readSettings() {
+		RecordStore rs = null;
 		try {
 			MeBoy.suspendName10 = new String[0];
 			MeBoy.suspendName20 = new String[0];
 			
-			RecordStore rs = RecordStore.openRecordStore("set", true);
+			rs = RecordStore.openRecordStore("set", true);
 			if (rs.getNumRecords() > 0) {
 				MeBoy.log("Settings: existing RecordStore found, loading persisted settings");
 				byte[] b = rs.getRecord(1);
 				
 				for (int i = 0; i < 8; i++)
-					key[i] = getInt(b, i * 4);
-				if (b.length >= 36)
-					MeBoy.maxFrameSkip = getInt(b, 32);
-				if (b.length >= 40)
-					MeBoy.rotations = getInt(b, 36);
-				if (b.length >= 44)
-					MeBoy.lazyLoadingThreshold = getInt(b, 40);
+					key[i] = getIntChecked(b, i * 4, "key[" + i + "]");
+				if (hasRange(b, 32, 4))
+					MeBoy.maxFrameSkip = getIntChecked(b, 32, "maxFrameSkip");
+				if (hasRange(b, 36, 4))
+					MeBoy.rotations = getIntChecked(b, 36, "rotations");
+				if (hasRange(b, 40, 4))
+					MeBoy.lazyLoadingThreshold = getIntChecked(b, 40, "lazyLoadingThreshold");
 				
 				int index = 44;
 				if (b.length > index) {
 					// suspended games index
-					MeBoy.suspendCounter = getInt(b, index);
+					MeBoy.suspendCounter = getIntChecked(b, index, "suspendCounter");
 					index += 4;
-					MeBoy.suspendName10 = new String[getInt(b, index)];
-					index += 4;
-					for (int i = 0; i < MeBoy.suspendName10.length; i++) {
-						int slen = b[index++] & 0xff;
-						
-						MeBoy.suspendName10[i] = new String(b, index, slen);
-						index += slen;
+					int oldSuspendCount = getIntChecked(b, index, "suspendName10 length");
+					if (oldSuspendCount < 0) {
+						throw new Exception("Corrupt settings store: negative suspendName10 length");
 					}
+					MeBoy.suspendName10 = new String[oldSuspendCount];
+					index += 4;
+					int[] indexRef = new int[] {index};
+					for (int i = 0; i < MeBoy.suspendName10.length; i++) {
+						MeBoy.suspendName10[i] = readByteString(b, indexRef, "suspendName10[" + i + "]");
+					}
+					index = indexRef[0];
 				}
 
 				if (b.length > index) {
@@ -472,17 +525,13 @@ public class GBCanvas extends Canvas implements CommandListener {
 				}
 
 				if (b.length > index) {
-					MeBoy.suspendName20 = new String[b[index++]];
+					int suspendCount20 = b[index++] & 0xFF;
+					MeBoy.suspendName20 = new String[suspendCount20];
+					int[] indexRef = new int[] {index};
 					for (int i = 0; i < MeBoy.suspendName20.length; i++) {
-						// Manual UTF-16, since new String(..., encoding) is not well-supported:
-						int slen = b[index++] & 0xff;
-						char[] chars = new char[slen];
-						for (int j = 0; j < slen; j++) {
-							chars[j] += (b[index++] & 0xff) << 8;
-							chars[j] += (b[index++] & 0xff);
-						}
-						MeBoy.suspendName20[i] = new String(chars);
+						MeBoy.suspendName20[i] = readUtf16String(b, indexRef, "suspendName20[" + i + "]");
 					}
+					index = indexRef[0];
 				}
 				MeBoy.log("Settings: loaded persisted language id " + MeBoy.language + " (bytes=" + b.length + ")");
 			} else {
@@ -491,11 +540,20 @@ public class GBCanvas extends Canvas implements CommandListener {
 				MeBoy.log("Settings: auto-detected language id " + MeBoy.language + ", saving initial settings");
 				writeSettings();
 			}
-			rs.closeRecordStore();
 		} catch (Exception e) {
 			if (MeBoy.debug)
 				e.printStackTrace();
 			MeBoy.log(e.toString());
+			MeBoy.log("Settings: failed to load persisted settings, resetting to defaults");
+			MeBoy.suspendName10 = new String[0];
+			MeBoy.suspendName20 = new String[0];
+			MeBoy.language = MeBoy.detectLanguageFromLocale();
+		} finally {
+			try {
+				if (rs != null)
+					rs.closeRecordStore();
+			} catch (Exception e) {
+			}
 		}
 	}
 	
