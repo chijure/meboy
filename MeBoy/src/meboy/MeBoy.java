@@ -36,10 +36,14 @@ import javax.microedition.lcdui.*;
 import javax.microedition.midlet.*;
 import javax.microedition.rms.*;
 import meboy.app.AppInfo;
+import meboy.app.LanguageResources;
+import meboy.io.CartCatalog;
 import meboy.io.ExternalRomStore;
 import meboy.io.FileBrowserUtil;
 import meboy.io.SuspendedGameStore;
+import meboy.ui.CartListController;
 import meboy.ui.FileBrowserController;
+import meboy.ui.MainMenuController;
 import meboy.ui.ResumeGameController;
 import meboy.ui.SettingsController;
 import meboy.util.StringArrayUtil;
@@ -48,7 +52,7 @@ import meboy.util.StringArrayUtil;
  * The main class offers a list of games, read from the file "carts.txt". It
  * also handles logging.
  */
-public class MeBoy extends MIDlet implements CommandListener, ResumeGameController.Host, SettingsController.Host, FileBrowserController.Host {
+public class MeBoy extends MIDlet implements CommandListener, ResumeGameController.Host, SettingsController.Host, FileBrowserController.Host, MainMenuController.Host, CartListController.Host {
 	// Settings, etc.
 	public static final boolean debug = true;
 	public static int rotations = 0;
@@ -71,13 +75,9 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 	public static String[] suspendName10 = new String[0]; // v1-style suspended games
 	public static String[] suspendName20 = new String[0]; // v2-style suspended games
 	public static String[] literal = new String[80];
-	private static int languageCount = 1;
 	private static String[] languages = new String[] {"English"}; // if index.txt fails
 	private static int[] languageLookup = new int[] {0};
-	private String[] cartDisplayName = null;
-	private String[] cartFileName = null;
-	private String[] cartID = null;
-	private int numCarts;
+	private CartCatalog cartCatalog = CartCatalog.empty();
 	private boolean fatalError;
 	private boolean fileSystemAvailable = false;
 	
@@ -86,10 +86,10 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 	
 	// UI components
 	public static Display display;
-	private javax.microedition.lcdui.List mainMenu;
 	private Form messageForm;
 	private GBCanvas gbCanvas;
-	private javax.microedition.lcdui.List cartList;
+	private MainMenuController mainMenuController;
+	private CartListController cartListController;
 	private ResumeGameController resumeGameController;
 	private SettingsController settingsController;
 	private FileBrowserController fileBrowserController;
@@ -114,6 +114,8 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 		
 		instance = this;
 		display = Display.getDisplay(this);
+		mainMenuController = new MainMenuController(this);
+		cartListController = new CartListController(this);
 		resumeGameController = new ResumeGameController(this);
 		settingsController = new SettingsController(this);
 		fileBrowserController = new FileBrowserController(this);
@@ -133,26 +135,14 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 	}
 
 	private boolean readLiteralsFile() {
-		try {
-			log("Language literals: loading /lang/" + language + ".txt");
-			InputStreamReader isr = openLangReader(language + ".txt");
-			int counter = 0;
-			String s;
-			while ((s = next(isr)) != null)
-				literal[counter++] = s;
-			isr.close();
-			while (counter < literal.length)
-				literal[counter++] = "?";
-			log("Language literals: loaded " + counter + " entries for language id " + language);
-		} catch (Exception e) {
-			e.printStackTrace();
+		if (!LanguageResources.loadLiterals(getClass(), language, literal)) {
 			if (language > 0) {
 				log("Language literals: failed for language id " + language + ", falling back to 0");
 				language = 0;
 				return readLiteralsFile();
 			}
 			
-			showError("Failed to read the language file.", null, e);
+			showError("Failed to read the language file.", null, null);
 			fatalError = true;
 			return false;
 		}
@@ -160,222 +150,26 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 	}
 
 	private void readLangIndexFile() {
-		try {
-			InputStreamReader isr = openLangReader("index.txt");
-			
-			String code;
-			Vector langVector = new Vector();
-			Vector lookupVector = new Vector();
-			languageCount = 0;
-			while ((code = next(isr)) != null) {
-				String langName = next(isr);
-				if (code.length() == 0 || langName == null) {
-					continue;
-				}
-				lookupVector.addElement(new Integer(code.charAt(0) - 'a'));
-				langVector.addElement(langName);
-				languageCount++;
-			}
-			languages = new String[languageCount];
-			langVector.copyInto(languages);
-			languageLookup = new int[languageCount];
-			for (int i = 0; i < languageCount; i++) {
-				languageLookup[i] = ((Integer) lookupVector.elementAt(i)).intValue();
-			}
-			log("Language index: loaded " + languageCount + " languages, current language id=" + language);
-			
-			isr.close();
-		} catch (Exception e) {
-			languages = new String[] {"English"};
-			languageLookup = new int[] {0};
-			languageCount = 1;
-			
-			if (debug) {
-				e.printStackTrace();
-			}
-		}
+		LanguageResources.LanguageIndex languageIndex = LanguageResources.loadIndex(getClass());
+		languages = languageIndex.names;
+		languageLookup = languageIndex.lookup;
+		log("Language index: current language id=" + language);
 	}
 
 	static int detectLanguageFromLocale() {
-		String[] localeProps = new String[] {
-			"microedition.locale",
-			"user.language",
-			"user.locale"
-		};
-		for (int i = 0; i < localeProps.length; i++) {
-			String locale = readSystemProperty(localeProps[i]);
-			log("Language detect: " + localeProps[i] + "=" + (locale == null ? "<null>" : locale));
-			int detected = mapLocaleToLanguage(locale);
-			if (detected >= 0) {
-				log("Language detect: matched locale from " + localeProps[i] + " -> language id " + detected);
-				return detected;
-			}
-		}
-		log("Language detect: no locale match, defaulting to language id 0");
-		return 0;
-	}
-
-	private static String readSystemProperty(String key) {
-		try {
-			String value = System.getProperty(key);
-			if (value != null && value.length() > 0) {
-				return value.toLowerCase();
-			}
-		} catch (Throwable t) {
-		}
-		return null;
-	}
-
-	private static boolean hasLanguagePrefix(String locale, String prefix) {
-		if (locale == null || prefix == null || !locale.startsWith(prefix)) {
-			return false;
-		}
-		if (locale.length() == prefix.length()) {
-			return true;
-		}
-		char separator = locale.charAt(prefix.length());
-		return separator == '_' || separator == '-' || separator == '.' || separator == '@';
-	}
-
-	private static int mapLocaleToLanguage(String locale) {
-		if (locale == null || locale.length() == 0) {
-			return -1;
-		}
-		// Some emulators report names like "Spanish_Peru.1252" instead of ISO codes.
-		if (hasLanguagePrefix(locale, "es") || locale.indexOf("spanish") >= 0 || locale.indexOf("espan") >= 0
-				|| locale.indexOf("castell") >= 0) {
-			return 1; // Espanol
-		}
-		if (hasLanguagePrefix(locale, "el") || locale.indexOf("greek") >= 0) {
-			return 2;
-		}
-		if (hasLanguagePrefix(locale, "pt") || locale.indexOf("portugu") >= 0) {
-			return 3;
-		}
-		if (hasLanguagePrefix(locale, "zh") || locale.indexOf("chinese") >= 0) {
-			return 4;
-		}
-		if (hasLanguagePrefix(locale, "pl") || locale.indexOf("polish") >= 0) {
-			return 5;
-		}
-		if (hasLanguagePrefix(locale, "de") || locale.indexOf("german") >= 0 || locale.indexOf("deutsch") >= 0) {
-			return 6;
-		}
-		if (hasLanguagePrefix(locale, "nl") || locale.indexOf("dutch") >= 0 || locale.indexOf("neder") >= 0) {
-			return 7;
-		}
-		if (hasLanguagePrefix(locale, "id") || hasLanguagePrefix(locale, "in") || locale.indexOf("indones") >= 0) {
-			return 8;
-		}
-		if (hasLanguagePrefix(locale, "fr") || locale.indexOf("french") >= 0 || locale.indexOf("franc") >= 0) {
-			return 9;
-		}
-		if (hasLanguagePrefix(locale, "it") || locale.indexOf("ital") >= 0) {
-			return 10;
-		}
-		if (hasLanguagePrefix(locale, "cs") || hasLanguagePrefix(locale, "cz") || locale.indexOf("czech") >= 0
-				|| locale.indexOf("cesk") >= 0) {
-			return 11;
-		}
-		if (hasLanguagePrefix(locale, "ru") || locale.indexOf("russian") >= 0) {
-			return 12;
-		}
-		if (hasLanguagePrefix(locale, "hr") || locale.indexOf("croatian") >= 0 || locale.indexOf("hrvat") >= 0) {
-			return 13;
-		}
-		if (hasLanguagePrefix(locale, "sr") || locale.indexOf("serbian") >= 0 || locale.indexOf("srps") >= 0) {
-			return 14;
-		}
-		if (hasLanguagePrefix(locale, "uk") || locale.indexOf("ukrain") >= 0) {
-			return 15;
-		}
-		if (hasLanguagePrefix(locale, "lt") || locale.indexOf("lithuan") >= 0 || locale.indexOf("lietuv") >= 0) {
-			return 16;
-		}
-		if (hasLanguagePrefix(locale, "lv") || locale.indexOf("latv") >= 0) {
-			return 17;
-		}
-		if (hasLanguagePrefix(locale, "hu") || locale.indexOf("hungar") >= 0 || locale.indexOf("magyar") >= 0) {
-			return 18;
-		}
-		if (hasLanguagePrefix(locale, "gsw") || locale.indexOf("swiss") >= 0 || locale.indexOf("schwizer") >= 0) {
-			return 19;
-		}
-		if (hasLanguagePrefix(locale, "da") || locale.indexOf("danish") >= 0) {
-			return 20;
-		}
-		if (hasLanguagePrefix(locale, "tr") || locale.indexOf("turkish") >= 0 || locale.indexOf("turk") >= 0) {
-			return 21;
-		}
-		if (hasLanguagePrefix(locale, "en") || locale.indexOf("english") >= 0) {
-			return 0;
-		}
-		return -1;
-	}
-
-	private InputStreamReader openLangReader(String fileName) throws IOException {
-		String[] resourcePaths = new String[] {
-			"/lang/" + fileName,
-			"../../lang/" + fileName,
-			"lang/" + fileName
-		};
-		for (int i = 0; i < resourcePaths.length; i++) {
-			InputStream stream = getClass().getResourceAsStream(resourcePaths[i]);
-			if (stream != null) {
-				return new InputStreamReader(stream, "UTF-8");
-			}
-		}
-		throw new IOException("Language resource not found: " + fileName);
-	}
-	
-	private String next(InputStreamReader isr) throws IOException {
-		StringBuffer sb = new StringBuffer();
-		int c;
-		while ((c = isr.read()) != -1) {
-			if (c >= 32) {
-				sb.append((char) c);
-			} else if (sb.length() > 0) {
-				return sb.toString();
-			}
-		}
-		if (sb.length() > 0) {
-			return sb.toString();
-		}
-		return null;
+		return LanguageResources.detectLanguageFromLocale();
 	}
 	
 	private boolean readCartNames() {
-		try {
-			InputStream is = getClass().getResourceAsStream("/carts");
-			DataInputStream dis = new DataInputStream(is);
-			
-			numCarts = dis.readInt();
-			
-			cartDisplayName = new String[numCarts];
-			cartFileName = new String[numCarts];
-			cartID = new String[numCarts];
-			
-			for (int i = 0; i < numCarts; i++) {
-				cartDisplayName[i] = dis.readUTF();
-				cartFileName[i] = dis.readUTF();
-				cartID[i] = dis.readUTF();
-			}
-			is.close();
-		} catch (Exception e) {
-			numCarts = 0;
-			cartDisplayName = new String[0];
-			cartFileName = new String[0];
-			cartID = new String[0];
-			log("No bundled carts were found in the JAR.");
-		}
+		cartCatalog = CartCatalog.load(getClass());
 		return true;
 	}
 	
 	public boolean upgradeSavegames() {
 		// upgrade cart ram:
-		for (int i = 0; i < numCarts; i++) {
-			String oldSaveName = cartFileName[i];
-			String newSaveName = cartID[i];
+		for (int i = 0; i < cartCatalog.size(); i++) {
+			String oldSaveName = cartCatalog.getFileNameAt(i);
+			String newSaveName = cartCatalog.getIdAt(i);
 			
 			try {
 				RecordStore rs = RecordStore.openRecordStore(oldSaveName, false);
@@ -432,8 +226,8 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 		String cartFileNameTemp = sb.toString();
 
 		// see if we can find the corresponding cart filename
-		for (int k = 0; k < numCarts; k++) {
-			if (cartFileNameTemp.equals(cartFileName[k])) {
+		for (int k = 0; k < cartCatalog.size(); k++) {
+			if (cartFileNameTemp.equals(cartCatalog.getFileNameAt(k))) {
 				// remove suspended game from 1.0-style index:
 				suspendName10 = StringArrayUtil.removeAt(suspendName10, index);
 				suspendName10Shrunk = true;
@@ -450,7 +244,7 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 				boolean addToIndex = false;
 				if (rs2.getNumRecords() == 0) {
 					// copy oldstyle to newstyle savegame buffers
-					byte[] cartIDBuffer = cartID[k].getBytes();
+					byte[] cartIDBuffer = cartCatalog.getIdAt(k).getBytes();
 
 					boolean gbcFeatures;
 					int gbSizeModBank = cartFileNameTemp.length() + 629;
@@ -620,114 +414,23 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 	}
 
 	public void showMainMenu() {
-		mainMenu = new javax.microedition.lcdui.List(AppInfo.APP_TITLE, javax.microedition.lcdui.List.IMPLICIT);
-		if (numCarts > 0) {
-			mainMenu.append(literal[0], null);
-		}
-		if (fileSystemAvailable) {
-			mainMenu.append(AppInfo.LOAD_SD_LABEL, null);
-		}
-		if (suspendName20.length > 0) {
-			mainMenu.append(literal[1], null);
-		}
-		mainMenu.append(literal[2], null);
-		if (bluetoothAvailable) {
-			mainMenu.append(literal[4], null);
-		}
-		mainMenu.append(literal[5], null);
-		if (showLogItem) {
-			mainMenu.append(literal[3], null);
-		}
-		mainMenu.append(literal[6], null);
-		mainMenu.setCommandListener(this);
-		display.setCurrent(mainMenu);
+		mainMenuController.show();
 	}
 
-	private void mainMenuCommand(Command com) {
-		String item = mainMenu.getString(mainMenu.getSelectedIndex());
-		if (literal[0].equals(item)) {
-			showCartList();
-		} else if (literal[1].equals(item)) {
-			showResumeGame();
-		} else if (literal[2].equals(item)) {
-			showSettings();
-		} else if (AppInfo.LOAD_SD_LABEL.equals(item)) {
-			fileBrowserController.showRoot();
-		} else if (literal[4].equals(item)) {
-			bluetooth = new Bluetooth(this);
-		} else if (literal[5].equals(item)) {
-			showMessage(literal[5], AppInfo.ABOUT_MESSAGE);
-		} else if (literal[3].equals(item)) {
-			log(literal[29] + " " + Runtime.getRuntime().freeMemory() + "/" + Runtime.getRuntime().totalMemory());
-			showLog();
-		} else if (literal[6].equals(item)) {
-			destroyApp(true);
-			notifyDestroyed();
-		} else {
-			showError(null, "Unknown command: " + com.getLabel(), null);
-		}
+	public void showCartList() {
+		cartListController.show();
 	}
 
-	private void showCartList() {
-		if (numCarts == 0) {
-			showMessage("MeBoy", AppInfo.NO_BUNDLED_ROMS_MESSAGE + AppInfo.LOAD_SD_LABEL + "\" from the main menu.");
-			return;
-		}
-		cartList = new javax.microedition.lcdui.List(literal[7], javax.microedition.lcdui.List.IMPLICIT);
-		
-		for (int i = 0; i < numCarts; i++)
-			cartList.append(cartDisplayName[i], null);
-
-		cartList.addCommand(new Command(literal[10], Command.BACK, 1));
-		cartList.setCommandListener(this);
-		display.setCurrent(cartList);
-	}
-
-	private void cartListCommand(Command com) {
-		if (com.getCommandType() == Command.BACK) {
-			cartList = null;
-			showMainMenu();
-			return;
-		}
-		
-		int ix = cartList.getSelectedIndex();
-		String selectedCartID = cartID[ix];
-		String selectedCartDisplayName = cartDisplayName[ix];
-		try {
-			gbCanvas = new GBCanvas(selectedCartID, this, selectedCartDisplayName);
-			cartList = null;
-			display.setCurrent(gbCanvas);
-		} catch (Exception e) {
-			showError(null, "error#1", e);
-		}
-	}
-
-	private void showResumeGame() {
+	public void showResumeGame() {
 		resumeGameController.show();
 	}
 
-	private void showSettings() {
+	public void showSettings() {
 		settingsController.show();
 	}
 	
 	public void addSavegamesToList(javax.microedition.lcdui.List list, Vector cartIDs, Vector filenames) {
-		for (int i = 0; i < numCarts; i++) {
-			try {
-				RecordStore rs = RecordStore.openRecordStore("20R_" + cartID[i], true);
-
-				if (rs.getNumRecords() > 0) {
-					list.append(cartDisplayName[i], null);
-					cartIDs.addElement(cartID[i]);
-					filenames.addElement(cartFileName[i]);
-				}
-				rs.closeRecordStore();
-			} catch (Exception e) {
-				if (MeBoy.debug) {
-					e.printStackTrace();
-				}
-				MeBoy.log(e.toString());
-			}
-		}
+		cartCatalog.addSavegamesToList(list, cartIDs, filenames);
 	}
 	
 	private boolean tearDownBluetooth() {
@@ -780,14 +483,14 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 			if (gameCartID.length() == 0) {
 				int ix = -1;
 				if (ix == -1 && gameFileName.length() > 0)
-					ix = findMatch(gameFileName, cartFileName, true);
+					ix = cartCatalog.findMatchByFileName(gameFileName, true);
 				if (ix == -1 && gameDisplayName.length() > 0)
-					ix = findMatch(gameDisplayName, cartDisplayName, true);
+					ix = cartCatalog.findMatchByDisplayName(gameDisplayName, true);
 				if (ix > -1)
-					gameCartID = cartID[ix];
+					gameCartID = cartCatalog.getIdAt(ix);
 			}
 			
-			if (gameCartID.length() > 0 && findMatch(gameCartID, cartID, false) > -1) {
+			if (gameCartID.length() > 0 && cartCatalog.indexOfId(gameCartID) > -1) {
 				addGameRAM(gameCartID, savegame);
 				showMessage(literal[4], literal[58]);
 			} else {
@@ -803,7 +506,7 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 		} else {
 			// suspended game
 			
-			if (gameCartID.length() > 0 && findMatch(gameCartID, cartID, false) > -1) {
+			if (gameCartID.length() > 0 && cartCatalog.indexOfId(gameCartID) > -1) {
 				try {
 					String suspendName = (MeBoy.suspendCounter++) + ": " + gameDisplayName;
 					
@@ -851,10 +554,10 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 	public void commandAction(Command com, Displayable s) {
 		if (s == messageForm)
 			messageCommand();
-		else if (s == mainMenu)
-			mainMenuCommand(com);
-		else if (s == cartList)
-			cartListCommand(com);
+		else if (mainMenuController.handles(s))
+			mainMenuController.commandAction(com, s);
+		else if (cartListController.handles(s))
+			cartListController.commandAction(com, s);
 		else if (resumeGameController.handles(s))
 			resumeGameController.commandAction(com, s);
 		else if (settingsController.handles(s))
@@ -891,7 +594,6 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 
 	public void reloadLiterals() {
 		readLiteralsFile();
-		cartList = null;
 	}
 
 	public void showErrorMessage(String message, String details, Throwable exception) {
@@ -912,12 +614,7 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 	}
 
 	public String resolveCartDisplayName(String suspendCartID) {
-		for (int i = 0; i < numCarts; i++) {
-			if (suspendCartID.equals(cartID[i])) {
-				return cartDisplayName[i];
-			}
-		}
-		return null;
+		return cartCatalog.findDisplayNameById(suspendCartID);
 	}
 
 	public void openSuspendedGame(String suspendCartID, String suspendCartDisplayName, String suspendName, byte[] suspendState) {
@@ -927,6 +624,73 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 
 	public int nextSuspendCounter() {
 		return suspendCounter++;
+	}
+
+	public boolean hasBundledCarts() {
+		return !cartCatalog.isEmpty();
+	}
+
+	public boolean isFileSystemAvailable() {
+		return fileSystemAvailable;
+	}
+
+	public boolean hasSuspendedGames() {
+		return suspendName20.length > 0;
+	}
+
+	public boolean isBluetoothAvailable() {
+		return bluetoothAvailable;
+	}
+
+	public boolean isShowLogItemEnabled() {
+		return showLogItem;
+	}
+
+	public void showFileBrowserRoot() {
+		fileBrowserController.showRoot();
+	}
+
+	public void startBluetooth() {
+		bluetooth = new Bluetooth(this);
+	}
+
+	public void showAbout() {
+		showMessage(literal[5], AppInfo.ABOUT_MESSAGE);
+	}
+
+	public void showLogMemory() {
+		log(literal[29] + " " + Runtime.getRuntime().freeMemory() + "/" + Runtime.getRuntime().totalMemory());
+		showLog();
+	}
+
+	public void exitApplication() {
+		destroyApp(true);
+		notifyDestroyed();
+	}
+
+	public void showUnknownCommandError(String label) {
+		showError(null, "Unknown command: " + label, null);
+	}
+
+	public String[] getCartDisplayNames() {
+		return cartCatalog.getDisplayNames();
+	}
+
+	public String getCartIDAt(int index) {
+		return cartCatalog.getIdAt(index);
+	}
+
+	public String getCartDisplayNameAt(int index) {
+		return cartCatalog.getDisplayNameAt(index);
+	}
+
+	public void openCart(String selectedCartID, String selectedCartDisplayName) {
+		gbCanvas = new GBCanvas(selectedCartID, this, selectedCartDisplayName);
+		display.setCurrent(gbCanvas);
+	}
+
+	public void showNoBundledRomsMessage() {
+		showMessage("MeBoy", AppInfo.NO_BUNDLED_ROMS_MESSAGE + AppInfo.LOAD_SD_LABEL + "\" from the main menu.");
 	}
 	
 	public static void addGameRAM(String name, byte[] data) {
@@ -968,20 +732,4 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 		return ExternalRomStore.takeRomFile(cartName);
 	}
 	
-	private int findMatch(String match, String[] list, boolean fuzzy) {
-		// exact match
-		for (int i = 0; i < list.length; i++)
-			if (list[i].equals(match))
-				return i;
-		if (!fuzzy)
-			return -1;
-		// prefix match, sans extension
-		int lastdot = match.lastIndexOf('.');
-		if (lastdot != -1 && lastdot > match.length() - 5)
-			match = match.substring(0, lastdot);
-		for (int i = 0; i < list.length; i++)
-			if (list[i].startsWith(match))
-				return i;
-		return -1;
-	}
 }
