@@ -68,6 +68,15 @@ public class MeBoy extends MIDlet implements CommandListener {
 	private static int[] languageLookup = new int[] {0};
 	private static final String LOAD_SD_LABEL = "Load ROM from SD";
 	private static final String BACK_DIR_LABEL = "..";
+	private static final String FILE_BROWSER_TITLE = "Select ROM";
+	private static final String WAIT_FORM_TITLE = "MeBoy";
+	private static final String WAIT_STORAGE_MESSAGE = "Opening storage...";
+	private static final String WAIT_LOADING_ROM_MESSAGE = "Loading ROM...";
+	private static final String NO_BUNDLED_ROMS_MESSAGE = "No bundled ROMs found. Use \"";
+	private static final String FILE_BROWSER_OPEN_ERROR = "Could not open file browser.";
+	private static final String ROM_LOAD_MEMORY_ERROR = "Not enough memory to load ROM.";
+	private static final String ROM_LOAD_ERROR = "Could not load ROM from storage.";
+	private static final String FILE_OPERATION_ERROR = "File operation failed.";
 	private static final int MAX_EXTERNAL_ROM_SIZE = 4 * 1024 * 1024;
 	private static final Hashtable externalRoms = new Hashtable();
 	private static final Hashtable externalRomFiles = new Hashtable();
@@ -685,7 +694,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 
 	private void showCartList() {
 		if (numCarts == 0) {
-			showMessage("MeBoy", "No bundled ROMs found. Use \"" + LOAD_SD_LABEL + "\" from the main menu.");
+			showMessage("MeBoy", NO_BUNDLED_ROMS_MESSAGE + LOAD_SD_LABEL + "\" from the main menu.");
 			return;
 		}
 		cartList = new javax.microedition.lcdui.List(literal[7], javax.microedition.lcdui.List.IMPLICIT);
@@ -990,7 +999,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 
 	private void showFileBrowser(String path) {
 		currentBrowserPath = normalizeDirectoryPath(path);
-		fileBrowserList = new javax.microedition.lcdui.List("Select ROM", javax.microedition.lcdui.List.IMPLICIT);
+		fileBrowserList = new javax.microedition.lcdui.List(FILE_BROWSER_TITLE, javax.microedition.lcdui.List.IMPLICIT);
 		fileBrowserList.addCommand(new Command(literal[10], Command.BACK, 1));
 		fileBrowserList.setCommandListener(this);
 		browserEntries.removeAllElements();
@@ -1028,6 +1037,8 @@ public class MeBoy extends MIDlet implements CommandListener {
 							files.addElement(full);
 						}
 					}
+					sortStrings(dirs);
+					sortStrings(files);
 
 					for (int i = 0; i < dirs.size(); i++) {
 						String full = (String) dirs.elementAt(i);
@@ -1046,7 +1057,7 @@ public class MeBoy extends MIDlet implements CommandListener {
 
 			display.setCurrent(fileBrowserList);
 		} catch (Exception e) {
-			showError("Could not open file browser.", currentBrowserPath, e);
+			showError(FILE_BROWSER_OPEN_ERROR, currentBrowserPath, e);
 			showMainMenu();
 		}
 	}
@@ -1093,15 +1104,44 @@ public class MeBoy extends MIDlet implements CommandListener {
 
 			String externalCartID = buildExternalCartID(fileUrl);
 			registerExternalRomFile(externalCartID, fileUrl);
+			showWaitForm(WAIT_LOADING_ROM_MESSAGE);
 
 			gbCanvas = new GBCanvas(externalCartID, this, displayName);
 			fileBrowserList = null;
 			display.setCurrent(gbCanvas);
 		} catch (OutOfMemoryError oom) {
-			showError("Not enough memory to load ROM.", fileUrl, oom);
+			showError(ROM_LOAD_MEMORY_ERROR, fileUrl, oom);
 		} catch (Exception e) {
-			showError("Could not load ROM from storage.", fileUrl, e);
+			showError(ROM_LOAD_ERROR, fileUrl, e);
 		}
+	}
+
+	private static void sortStrings(Vector items) {
+		for (int i = 1; i < items.size(); i++) {
+			String value = (String) items.elementAt(i);
+			int j = i - 1;
+			while (j >= 0 && compareIgnoreCase((String) items.elementAt(j), value) > 0) {
+				items.setElementAt(items.elementAt(j), j + 1);
+				j--;
+			}
+			items.setElementAt(value, j + 1);
+		}
+	}
+
+	private static int compareIgnoreCase(String left, String right) {
+		if (left == null) {
+			return right == null ? 0 : -1;
+		}
+		if (right == null) {
+			return 1;
+		}
+		return left.toLowerCase().compareTo(right.toLowerCase());
+	}
+
+	private void showWaitForm(String message) {
+		Form wait = new Form(WAIT_FORM_TITLE);
+		wait.append(message);
+		display.setCurrent(wait);
 	}
 
 	private static String normalizeDirectoryPath(String path) {
@@ -1177,16 +1217,14 @@ public class MeBoy extends MIDlet implements CommandListener {
 			return;
 		}
 		fileTaskRunning = true;
-		final Form wait = new Form("MeBoy");
-		wait.append("Opening storage...");
-		display.setCurrent(wait);
+		showWaitForm(WAIT_STORAGE_MESSAGE);
 
 		new Thread(new Runnable() {
 			public void run() {
 				try {
 					action.run();
 				} catch (Throwable t) {
-					showError("File operation failed.", null, t);
+					showError(FILE_OPERATION_ERROR, null, t);
 				} finally {
 					fileTaskRunning = false;
 				}
