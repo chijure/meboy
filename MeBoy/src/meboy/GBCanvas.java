@@ -30,6 +30,7 @@ Place - Suite 330, Boston, MA 02111-1307, USA.
 
 import javax.microedition.lcdui.*;
 import javax.microedition.rms.*;
+import meboy.io.SaveFileStore;
 import meboy.io.SuspendedGameStore;
 
 
@@ -38,6 +39,8 @@ public class GBCanvas extends Canvas implements CommandListener {
 	private static final int FPS_HISTORY_SIZE = 16;
 	private static final int FPS_HISTORY_MASK = FPS_HISTORY_SIZE - 1;
 	private static final int FPS_BAR_HEIGHT = 16;
+	private static final int AUTO_SAVE_POLL_MS = 1000;
+	private static final int AUTO_SAVE_DEBOUNCE_MS = 2000;
 	private static final String SETTINGS_RECORD_NAME = "set";
 	private static final int INT_BYTES = 4;
 	private static final int SETTINGS_KEYS_OFFSET = 0;
@@ -89,12 +92,15 @@ public class GBCanvas extends Canvas implements CommandListener {
 	private int keySetCounter;
 	private boolean settingKeys;
 	private boolean paused;
+	private boolean exiting;
 	
 	private String cartDisplayName;
 	private String cartID;
 	private String suspendName;
 	
     private Thread cpuThread;
+    private Thread autoSaveThread;
+    private boolean autoSaveThreadRunning;
 	
 	
 	// Common constructor
@@ -120,6 +126,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 		
 		cpu = new Dmgcpu(cartID, this, suspendState);
 		setDimensions();
+		startAutoSaveThread();
 		
 		cpuThread = new Thread(cpu);
 		cpuThread.start();
@@ -135,6 +142,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 			loadCartRam();
 		
 		setDimensions();
+		startAutoSaveThread();
 		
 		cpuThread = new Thread(cpu);
 		cpuThread.start();
@@ -226,11 +234,24 @@ public class GBCanvas extends Canvas implements CommandListener {
 	public void commandAction(Command c, Displayable s) {
 		try {
 			if (c == exitCommand) {
-				if (cpu.hasBattery())
-					saveCartRam();
-				
-				parent.unloadCart();
-				Runtime.getRuntime().gc();
+				if (exiting) {
+					return;
+				}
+				exiting = true;
+				parent.showWaitForm("Saving game...");
+				Thread exitThread = new Thread(new Runnable() {
+					public void run() {
+						try {
+							if (cpu.hasBattery())
+								saveCartRam();
+						} finally {
+							parent.unloadCart();
+							Runtime.getRuntime().gc();
+							exiting = false;
+						}
+					}
+				});
+				exitThread.start();
 			} else if (c == pauseCommand) {
 				pause();
 			} else if (c == resumeCommand && !settingKeys) {
@@ -276,6 +297,7 @@ public class GBCanvas extends Canvas implements CommandListener {
 		if (cpuThread == null)
 			return;
 		
+		flushBatterySave();
 		paused = true;
 		updateCommands();
 		
@@ -294,6 +316,62 @@ public class GBCanvas extends Canvas implements CommandListener {
 				break;
 			}
 		}
+	}
+
+	private void startAutoSaveThread() {
+		if (!cpu.hasBattery() || autoSaveThread != null) {
+			return;
+		}
+
+		autoSaveThreadRunning = true;
+		autoSaveThread = new Thread(new Runnable() {
+			public void run() {
+				while (autoSaveThreadRunning) {
+					try {
+						Thread.sleep(AUTO_SAVE_POLL_MS);
+					} catch (InterruptedException e) {
+						break;
+					}
+
+					if (!autoSaveThreadRunning || cpu == null || paused || exiting) {
+						continue;
+					}
+
+					if (cpu.isBatterySaveDirty()) {
+						long idleTime = System.currentTimeMillis() - cpu.getLastBatteryWriteTime();
+						if (idleTime >= AUTO_SAVE_DEBOUNCE_MS) {
+							flushBatterySave();
+						}
+					}
+				}
+			}
+		});
+		autoSaveThread.start();
+	}
+
+	private void stopAutoSaveThread() {
+		autoSaveThreadRunning = false;
+		Thread thread = autoSaveThread;
+		autoSaveThread = null;
+		if (thread != null) {
+			thread.interrupt();
+			while (thread.isAlive()) {
+				try {
+					Thread.sleep(10);
+				} catch (InterruptedException e) {
+					MeBoy.log("Auto-save thread wait interrupted: " + e.toString());
+					break;
+				}
+			}
+		}
+	}
+
+	private synchronized void flushBatterySave() {
+		if (cpu == null || !cpu.hasBattery() || !cpu.isBatterySaveDirty()) {
+			return;
+		}
+		saveCartRam();
+		cpu.markBatterySaveClean();
 	}
 	
 	public final void redrawSmall() {
@@ -588,16 +666,20 @@ public class GBCanvas extends Canvas implements CommandListener {
 		}
 	}
 	
-	private final void saveCartRam() {
+	private synchronized void saveCartRam() {
 		try {
-			RecordStore rs = RecordStore.openRecordStore("20R_" + cartID, true);
-			
+			String externalRomFile = MeBoy.getExternalRomFile(cartID);
+			if (externalRomFile != null) {
+				SaveFileStore.write(externalRomFile, cpu.exportBatterySave());
+				saveExternalRtc(externalRomFile);
+				cpu.markBatterySaveClean();
+				return;
+			}
+
 			byte[][] ram = cpu.getCartRam();
-			
 			int bankCount = ram.length;
 			int bankSize = ram[0].length;
 			int size = bankCount * bankSize + 13;
-			
 			byte[] b = new byte[size];
 			
 			for (int i = 0; i < bankCount; i++)
@@ -607,14 +689,18 @@ public class GBCanvas extends Canvas implements CommandListener {
 			long now = System.currentTimeMillis();
 			setInt(b, bankCount * bankSize + 5, (int) (now >> 32));
 			setInt(b, bankCount * bankSize + 9, (int) now);
-			
-			if (rs.getNumRecords() == 0) {
-				rs.addRecord(b, 0, size);
-			} else {
-				rs.setRecord(1, b, 0, size);
+
+			RecordStore rs = RecordStore.openRecordStore("20R_" + cartID, true);
+			try {
+				if (rs.getNumRecords() == 0) {
+					rs.addRecord(b, 0, size);
+				} else {
+					rs.setRecord(1, b, 0, size);
+				}
+			} finally {
+				rs.closeRecordStore();
 			}
-			
-			rs.closeRecordStore();
+			cpu.markBatterySaveClean();
 		} catch (Exception e) {
 			if (MeBoy.debug)
 				e.printStackTrace();
@@ -623,32 +709,91 @@ public class GBCanvas extends Canvas implements CommandListener {
 	
 	private final void loadCartRam() {
 		try {
-			RecordStore rs = RecordStore.openRecordStore("20R_" + cartID, true);
-			
-			if (rs.getNumRecords() > 0) {
-				byte[][] ram = cpu.getCartRam();
-				int bankCount = ram.length;
-				int bankSize = ram[0].length;
-				
-				byte[] b = rs.getRecord(1);
-				
-				for (int i = 0; i < bankCount; i++)
-					System.arraycopy(b, i * bankSize, ram[i], 0, bankSize);
-				
-				if (b.length == bankCount * bankSize + 13) {
-					// load real time clock
-					System.arraycopy(b, bankCount * bankSize, cpu.getRtcReg(), 0, 5);
-					long time = getInt(b, bankCount * bankSize + 5);
-					time = (time << 32) + ((long) getInt(b, bankCount * bankSize + 9) & 0xffffffffL);
-					time = System.currentTimeMillis() - time;
-					cpu.rtcSkip((int) (time / 1000));
+			byte[] b = null;
+			String externalRomFile = MeBoy.getExternalRomFile(cartID);
+			if (externalRomFile != null) {
+				b = SaveFileStore.read(externalRomFile);
+				if (b != null) {
+					if (isLegacySaveFormat(b)) {
+						loadLegacyBatterySave(b);
+					} else {
+						cpu.importBatterySave(b);
+						loadExternalRtc(externalRomFile);
+					}
+					return;
 				}
 			}
-			rs.closeRecordStore();
+
+			if (b == null) {
+				RecordStore rs = RecordStore.openRecordStore("20R_" + cartID, true);
+				try {
+					if (rs.getNumRecords() > 0) {
+						b = rs.getRecord(1);
+					}
+				} finally {
+					rs.closeRecordStore();
+				}
+			}
+
+			if (b == null) {
+				return;
+			}
+
+			loadLegacyBatterySave(b);
 		} catch (Exception e) {
 			if (MeBoy.debug)
 				e.printStackTrace();
 			MeBoy.log(e.toString());
+		}
+	}
+
+	private void saveExternalRtc(String externalRomFile) throws Exception {
+		if (!cpu.hasRtc()) {
+			SaveFileStore.deleteRtc(externalRomFile);
+			return;
+		}
+
+		byte[] rtc = new byte[13];
+		System.arraycopy(cpu.getRtcReg(), 0, rtc, 0, 5);
+		long now = System.currentTimeMillis();
+		setInt(rtc, 5, (int) (now >> 32));
+		setInt(rtc, 9, (int) now);
+		SaveFileStore.writeRtc(externalRomFile, rtc);
+	}
+
+	private void loadExternalRtc(String externalRomFile) throws Exception {
+		byte[] rtc = SaveFileStore.readRtc(externalRomFile);
+		if (rtc == null || rtc.length != 13 || !cpu.hasRtc()) {
+			return;
+		}
+
+		System.arraycopy(rtc, 0, cpu.getRtcReg(), 0, 5);
+		long time = getInt(rtc, 5);
+		time = (time << 32) + ((long) getInt(rtc, 9) & 0xffffffffL);
+		time = System.currentTimeMillis() - time;
+		cpu.rtcSkip((int) (time / 1000));
+	}
+
+	private boolean isLegacySaveFormat(byte[] data) {
+		byte[][] ram = cpu.getCartRam();
+		return data.length == ram.length * ram[0].length + 13;
+	}
+
+	private void loadLegacyBatterySave(byte[] b) {
+		byte[][] ram = cpu.getCartRam();
+		int bankCount = ram.length;
+		int bankSize = ram[0].length;
+
+		for (int i = 0; i < bankCount; i++)
+			System.arraycopy(b, i * bankSize, ram[i], 0, bankSize);
+
+		if (b.length == bankCount * bankSize + 13) {
+			// load real time clock
+			System.arraycopy(b, bankCount * bankSize, cpu.getRtcReg(), 0, 5);
+			long time = getInt(b, bankCount * bankSize + 5);
+			time = (time << 32) + ((long) getInt(b, bankCount * bankSize + 9) & 0xffffffffL);
+			time = System.currentTimeMillis() - time;
+			cpu.rtcSkip((int) (time / 1000));
 		}
 	}
 	
@@ -670,6 +815,8 @@ public class GBCanvas extends Canvas implements CommandListener {
     public void releaseReferences() {
 		// This code helps the garbage collector on some platforms.
 		// (contributed by Alberto Simon)
+        stopAutoSaveThread();
+        flushBatterySave();
         cpu.terminate();
         waitForCpuThread();
         cpu.releaseReferences();

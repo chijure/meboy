@@ -731,5 +731,9 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 	public static String takeExternalRomFile(String cartName) {
 		return ExternalRomStore.takeRomFile(cartName);
 	}
+
+	public static String getExternalRomFile(String cartName) {
+		return ExternalRomStore.getRomFile(cartName);
+	}
 	
 }

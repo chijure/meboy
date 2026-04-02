@@ -33,9 +33,10 @@ public final class ExternalRomStore {
 
 	public static String takeRomFile(String cartName) {
 		String path = (String) externalRomFiles.get(cartName);
-		if (path != null) {
-			externalRomFiles.remove(cartName);
-		}
 		return path;
+	}
+
+	public static String getRomFile(String cartName) {
+		return (String) externalRomFiles.get(cartName);
 	}
 }

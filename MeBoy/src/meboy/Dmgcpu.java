@@ -170,6 +170,8 @@ public class Dmgcpu implements Runnable {
 	
 	private boolean mbc1LargeRamMode;
 	private boolean cartRamEnabled;
+	private volatile boolean batterySaveDirty;
+	private volatile long lastBatteryWriteTime;
 
 	/** realtime clock */
 	public byte[] rtcReg = new byte[5];
@@ -2874,6 +2876,7 @@ public class Dmgcpu implements Runnable {
 					// to break Pokemon yellow... (which uses MBC5, but I'm erring
 					// on the side of caution).
 					memory[halfbank][subaddr] = (byte) data;
+					markBatterySaveDirty();
 				}
 				break;
 				
@@ -2894,6 +2897,7 @@ public class Dmgcpu implements Runnable {
 					// to break Pokemon yellow... (which uses MBC5, but I'm erring
 					// on the side of caution).
 					memory[halfbank][subaddr] = (byte) data;
+					markBatterySaveDirty();
 				}
 				
 				break;
@@ -2924,12 +2928,14 @@ public class Dmgcpu implements Runnable {
 						// rtc register
 						rtcSync();
 						rtcReg[currentRamBank - 8] = (byte) data;
+						markBatterySaveDirty();
 					} else if (memory[halfbank] != null) {
 						// normal memory
 						// fixme, we should check cartRamEnabled, but that seems
 						// to break Pokemon yellow... (which uses MBC5, but I'm erring
 						// on the side of caution).
 						memory[halfbank][subaddr] = (byte) data;
+						markBatterySaveDirty();
 					}
 				}
 				break;
@@ -2960,6 +2966,7 @@ public class Dmgcpu implements Runnable {
 						// fixme, we should check cartRamEnabled, but that seems
 						// to break Pokemon yellow...
 						memory[halfbank][subaddr] = (byte) data;
+						markBatterySaveDirty();
 					}
 				}
 				break;
@@ -3095,6 +3102,94 @@ public class Dmgcpu implements Runnable {
 	
 	public byte[] getRtcReg() {
 		return rtcReg;
+	}
+
+	private void markBatterySaveDirty() {
+		batterySaveDirty = true;
+		lastBatteryWriteTime = System.currentTimeMillis();
+	}
+
+	public boolean isBatterySaveDirty() {
+		return batterySaveDirty;
+	}
+
+	public long getLastBatteryWriteTime() {
+		return lastBatteryWriteTime;
+	}
+
+	public void markBatterySaveClean() {
+		batterySaveDirty = false;
+	}
+
+	public boolean hasRtc() {
+		return (cartType == 0x0F) || (cartType == 0x10);
+	}
+
+	public boolean usesMbc2SaveFormat() {
+		return (cartType == 5) || (cartType == 6);
+	}
+
+	public int getBatterySaveSize() {
+		if (usesMbc2SaveFormat()) {
+			return 512;
+		}
+
+		switch (rom[0][0x149] & 0xff) {
+			case 1:
+				return 0x0800;
+			case 2:
+				return 0x2000;
+			case 3:
+				return 0x8000;
+			case 4:
+				return 0x20000;
+			case 5:
+				return 0x10000;
+			default:
+				return cartRam.length * 0x2000;
+		}
+	}
+
+	public byte[] exportBatterySave() {
+		int size = getBatterySaveSize();
+		byte[] data = new byte[size];
+
+		if (usesMbc2SaveFormat()) {
+			for (int i = 0; i < size; i++) {
+				data[i] = (byte) (cartRam[0][i] & 0x0F);
+			}
+			return data;
+		}
+
+		int offset = 0;
+		for (int i = 0; i < cartRam.length && offset < size; i++) {
+			int copyLength = Math.min(0x2000, size - offset);
+			System.arraycopy(cartRam[i], 0, data, offset, copyLength);
+			offset += copyLength;
+		}
+		return data;
+	}
+
+	public void importBatterySave(byte[] data) {
+		if (data == null) {
+			return;
+		}
+
+		if (usesMbc2SaveFormat()) {
+			int copyLength = Math.min(512, data.length);
+			for (int i = 0; i < copyLength; i++) {
+				cartRam[0][i] = (byte) (data[i] & 0x0F);
+			}
+			return;
+		}
+
+		int size = getBatterySaveSize();
+		int offset = 0;
+		for (int i = 0; i < cartRam.length && offset < size && offset < data.length; i++) {
+			int copyLength = Math.min(0x2000, Math.min(size - offset, data.length - offset));
+			System.arraycopy(data, offset, cartRam[i], 0, copyLength);
+			offset += copyLength;
+		}
 	}
 	
 	public byte[][] getCartRam() {
