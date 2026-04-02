@@ -42,6 +42,7 @@ import meboy.io.ExternalRomStore;
 import meboy.io.FileBrowserUtil;
 import meboy.io.SuspendedGameStore;
 import meboy.ui.CartListController;
+import meboy.ui.DeviceInfoController;
 import meboy.ui.FileBrowserController;
 import meboy.ui.MainMenuController;
 import meboy.ui.ResumeGameController;
@@ -52,7 +53,7 @@ import meboy.util.StringArrayUtil;
  * The main class offers a list of games, read from the file "carts.txt". It
  * also handles logging.
  */
-public class MeBoy extends MIDlet implements CommandListener, ResumeGameController.Host, SettingsController.Host, FileBrowserController.Host, MainMenuController.Host, CartListController.Host {
+public class MeBoy extends MIDlet implements CommandListener, ResumeGameController.Host, SettingsController.Host, DeviceInfoController.Host, FileBrowserController.Host, MainMenuController.Host, CartListController.Host {
 	// Settings, etc.
 	public static final boolean debug = true;
 	public static int rotations = 0;
@@ -92,6 +93,7 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 	private CartListController cartListController;
 	private ResumeGameController resumeGameController;
 	private SettingsController settingsController;
+	private DeviceInfoController deviceInfoController;
 	private FileBrowserController fileBrowserController;
 	
 	private Bluetooth bluetooth;
@@ -118,6 +120,7 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 		cartListController = new CartListController(this);
 		resumeGameController = new ResumeGameController(this);
 		settingsController = new SettingsController(this);
+		deviceInfoController = new DeviceInfoController(this);
 		fileBrowserController = new FileBrowserController(this);
 
 		GBCanvas.readSettings();
@@ -428,6 +431,10 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 	public void showSettings() {
 		settingsController.show();
 	}
+
+	public void showDeviceInfo() {
+		deviceInfoController.show();
+	}
 	
 	public void addSavegamesToList(javax.microedition.lcdui.List list, Vector cartIDs, Vector filenames) {
 		cartCatalog.addSavegamesToList(list, cartIDs, filenames);
@@ -562,6 +569,8 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 			resumeGameController.commandAction(com, s);
 		else if (settingsController.handles(s))
 			settingsController.commandAction(com, s);
+		else if (deviceInfoController.handles(s))
+			deviceInfoController.commandAction(com, s);
 		else if (fileBrowserController.handles(s))
 			fileBrowserController.commandAction(com, s);
 	}

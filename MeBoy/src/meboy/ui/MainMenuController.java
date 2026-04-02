@@ -19,6 +19,7 @@ public final class MainMenuController implements CommandListener {
 		void showCartList();
 		void showResumeGame();
 		void showSettings();
+		void showDeviceInfo();
 		void showFileBrowserRoot();
 		void startBluetooth();
 		void showAbout();
@@ -46,6 +47,7 @@ public final class MainMenuController implements CommandListener {
 			mainMenu.append(host.getLiteral(1), null);
 		}
 		mainMenu.append(host.getLiteral(2), null);
+		mainMenu.append(AppInfo.DEVICE_INFO_LABEL, null);
 		if (host.isBluetoothAvailable()) {
 			mainMenu.append(host.getLiteral(4), null);
 		}
@@ -70,6 +72,8 @@ public final class MainMenuController implements CommandListener {
 			host.showResumeGame();
 		} else if (host.getLiteral(2).equals(item)) {
 			host.showSettings();
+		} else if (AppInfo.DEVICE_INFO_LABEL.equals(item)) {
+			host.showDeviceInfo();
 		} else if (AppInfo.LOAD_SD_LABEL.equals(item)) {
 			host.showFileBrowserRoot();
 		} else if (host.getLiteral(4).equals(item)) {
