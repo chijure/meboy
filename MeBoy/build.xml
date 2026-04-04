@@ -4,6 +4,7 @@
 <!-- (If you delete it and reopen the project it will be recreated.) -->
 <project name="MeBoy" default="jar" basedir=".">
     <description>Builds, tests, and runs the project .</description>
+    <property file="resources/version.properties"/>
     <import file="nbproject/build-impl.xml"/>
     <!--
 

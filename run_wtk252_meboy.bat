@@ -8,6 +8,16 @@ if not exist "%JDK%\bin\javac.exe" set "JDK=C:\Program Files\Java\jdk1.8.0_221"
 set "TMP=build\wtk\tmpclasses"
 set "CLS=build\wtk\classes"
 set "DIST=build\wtk\dist"
+set "APP_VERSION="
+
+for /f "usebackq tokens=1,* delims==" %%A in ("MeBoy\resources\version.properties") do (
+	if /I "%%A"=="app.version" set "APP_VERSION=%%B"
+)
+
+if not defined APP_VERSION (
+	echo Could not read app version from MeBoy\resources\version.properties
+	goto fail
+)
 
 if exist "%TMP%" rmdir /s /q "%TMP%"
 if exist "%CLS%" rmdir /s /q "%CLS%"
@@ -29,7 +39,7 @@ echo Manifest-Version: 1.0
 echo MIDlet-1: MeBoy, meboy.png, MeBoy
 echo MIDlet-Name: MeBoy
 echo MIDlet-Vendor: Bjorn Carlin, www.arktos.se
-echo MIDlet-Version: 2.4.0
+echo MIDlet-Version: %APP_VERSION%
 echo MIDlet-Description: Gameboy emulator for J2ME
 echo MicroEdition-Configuration: CLDC-1.1
 echo MicroEdition-Profile: MIDP-2.0
@@ -49,7 +59,7 @@ echo Writing JAD...
 echo MIDlet-1: MeBoy, meboy.png, MeBoy
 echo MIDlet-Name: MeBoy
 echo MIDlet-Vendor: Bjorn Carlin, www.arktos.se
-echo MIDlet-Version: 2.4.0
+echo MIDlet-Version: %APP_VERSION%
 echo MIDlet-Description: Gameboy emulator for J2ME
 echo MicroEdition-Configuration: CLDC-1.1
 echo MicroEdition-Profile: MIDP-2.0

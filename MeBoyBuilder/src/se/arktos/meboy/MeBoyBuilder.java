@@ -52,7 +52,8 @@ import javax.swing.filechooser.FileFilter;
  * carts file.
  */
 public class MeBoyBuilder implements ActionListener, ListSelectionListener, WindowListener {
-	private static final String APP_TITLE = "MeBoyBuilder 2.4";
+	private static final String APP_VERSION = loadAppVersion();
+	private static final String APP_TITLE = "MeBoyBuilder " + toDisplayVersion(APP_VERSION);
 	private static final int DEFAULT_ICON_INDEX = 2;
 	private static final int CUSTOM_ICON_INDEX = 3;
 	private static final int ICON_MIN_SIZE = 16;
@@ -591,7 +592,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 		pw.write("MIDlet-1: " + midletName + ", meboy.png, meboy.MeBoy\n");
 		pw.write("MIDlet-Name: " + midletName + "\n");
 		pw.write("MIDlet-Vendor: Bjorn Carlin, www.arktos.se\n");
-		pw.write("MIDlet-Version: 2.4.0\n");
+		pw.write("MIDlet-Version: " + APP_VERSION + "\n");
 		pw.write("MIDlet-Description: Gameboy emulator for J2ME\n");
 		pw.write("MicroEdition-Configuration: CLDC-1.1\n");
 		pw.write("MicroEdition-Profile: MIDP-2.0\n");
@@ -604,7 +605,7 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 		pw.write("MIDlet-1: " + midletName + ", meboy.png, meboy.MeBoy\n");
 		pw.write("MIDlet-Name: " + midletName + "\n");
 		pw.write("MIDlet-Vendor: Bjorn Carlin, www.arktos.se\n");
-		pw.write("MIDlet-Version: 2.4.0\n");
+		pw.write("MIDlet-Version: " + APP_VERSION + "\n");
 		pw.write("MIDlet-Description: Gameboy emulator for J2ME\n");
 		pw.write("MicroEdition-Configuration: CLDC-1.1\n");
 		pw.write("MicroEdition-Profile: MIDP-2.0\n");
@@ -666,6 +667,59 @@ public class MeBoyBuilder implements ActionListener, ListSelectionListener, Wind
 		}
 
 		return null;
+	}
+
+	private static String loadAppVersion() {
+		File[] candidates = new File[] {
+				new File("MeBoy/resources/version.properties"),
+				new File("../MeBoy/resources/version.properties")
+		};
+
+		for (int i = 0; i < candidates.length; i++) {
+			String version = readAppVersion(candidates[i]);
+			if (version != null && version.length() > 0) {
+				return version;
+			}
+		}
+
+		return "0.0.0";
+	}
+
+	private static String readAppVersion(File file) {
+		BufferedReader reader = null;
+
+		try {
+			if (!file.exists()) {
+				return null;
+			}
+
+			reader = new BufferedReader(new InputStreamReader(new FileInputStream(file), "UTF-8"));
+			String line;
+
+			while ((line = reader.readLine()) != null) {
+				if (line.startsWith("app.version=")) {
+					return line.substring("app.version=".length()).trim();
+				}
+			}
+		} catch (IOException e) {
+			return null;
+		} finally {
+			if (reader != null) {
+				try {
+					reader.close();
+				} catch (IOException ignored) {
+				}
+			}
+		}
+
+		return null;
+	}
+
+	private static String toDisplayVersion(String version) {
+		if (version.endsWith(".0")) {
+			return version.substring(0, version.length() - 2);
+		}
+		return version;
 	}
 
 	private InputStream openJarEntry(String jarPath, String entryName) throws IOException {
