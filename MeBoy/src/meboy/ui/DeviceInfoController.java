@@ -11,6 +11,8 @@ public final class DeviceInfoController implements CommandListener {
 	public interface Host {
 		Display getDisplay();
 		void showMainMenu();
+		void appendLog(String message);
+		void openLog();
 	}
 
 	private static final String[] PROPERTY_KEYS = new String[] {
@@ -46,9 +48,8 @@ public final class DeviceInfoController implements CommandListener {
 
 	public void show() {
 		deviceInfoForm = new Form(AppInfo.DEVICE_INFO_TITLE);
-		appendOverview();
-		appendRuntimeInfo();
-		appendProperties();
+		deviceInfoForm.append(buildDeviceInfoText());
+		deviceInfoForm.addCommand(new Command(AppInfo.LOG_LABEL, Command.SCREEN, 0));
 		deviceInfoForm.addCommand(new Command(AppInfo.BACK_LABEL, Command.BACK, 0));
 		deviceInfoForm.setCommandListener(this);
 		host.getDisplay().setCurrent(deviceInfoForm);
@@ -59,50 +60,65 @@ public final class DeviceInfoController implements CommandListener {
 	}
 
 	public void commandAction(Command com, Displayable s) {
+		if (com.getCommandType() != Command.BACK) {
+			host.appendLog(buildDeviceInfoLogText());
+			host.openLog();
+			return;
+		}
 		deviceInfoForm = null;
 		host.showMainMenu();
 	}
 
-	private void appendOverview() {
-		deviceInfoForm.append("General\n");
-		appendLine("App", AppInfo.APP_TITLE);
-		appendLine("Platform", readProperty("microedition.platform"));
-		appendLine("Configuration", readProperty("microedition.configuration"));
-		appendLine("Profiles", readProperty("microedition.profiles"));
-		appendLine("Locale", readProperty("microedition.locale"));
-		appendLine("Encoding", readProperty("microedition.encoding"));
-		appendLine("CPU", guessCpuInfo());
-		appendLine("GPU", "Not exposed by Java ME");
-		deviceInfoForm.append("\n");
-	}
-
-	private void appendRuntimeInfo() {
+	private String buildDeviceInfoText() {
+		StringBuffer buffer = new StringBuffer();
 		Runtime runtime = Runtime.getRuntime();
 		long freeMemory = runtime.freeMemory();
 		long totalMemory = runtime.totalMemory();
+		
+		appendSectionTitle(buffer, "General");
+		appendLine(buffer, "App", AppInfo.APP_TITLE);
+		appendLine(buffer, "Platform", readProperty("microedition.platform"));
+		appendLine(buffer, "Configuration", readProperty("microedition.configuration"));
+		appendLine(buffer, "Profiles", readProperty("microedition.profiles"));
+		appendLine(buffer, "Locale", readProperty("microedition.locale"));
+		appendLine(buffer, "Encoding", readProperty("microedition.encoding"));
+		appendLine(buffer, "CPU", guessCpuInfo());
+		appendLine(buffer, "GPU", "Not exposed by Java ME");
+		appendBlankLine(buffer);
 
-		deviceInfoForm.append("Runtime\n");
-		appendLine("Display color", host.getDisplay().isColor() ? "Yes" : "No");
-		appendLine("Colors", Integer.toString(host.getDisplay().numColors()));
-		appendLine("Free heap", formatBytes(freeMemory));
-		appendLine("Total heap", formatBytes(totalMemory));
-		appendLine("Used heap", formatBytes(totalMemory - freeMemory));
-		deviceInfoForm.append("\n");
-	}
+		appendSectionTitle(buffer, "Runtime");
+		appendLine(buffer, "Display color", host.getDisplay().isColor() ? "Yes" : "No");
+		appendLine(buffer, "Colors", Integer.toString(host.getDisplay().numColors()));
+		appendLine(buffer, "Free heap", formatBytes(freeMemory));
+		appendLine(buffer, "Total heap", formatBytes(totalMemory));
+		appendLine(buffer, "Used heap", formatBytes(totalMemory - freeMemory));
+		appendBlankLine(buffer);
 
-	private void appendProperties() {
-		deviceInfoForm.append("System Properties\n");
+		appendSectionTitle(buffer, "System Properties");
 		for (int i = 0; i < PROPERTY_KEYS.length; i++) {
 			String key = PROPERTY_KEYS[i];
 			String value = readProperty(key);
 			if (value != null) {
-				appendLine(key, value);
+				appendLine(buffer, key, value);
 			}
 		}
+		return buffer.toString();
 	}
 
-	private void appendLine(String label, String value) {
-		deviceInfoForm.append(label + ": " + normalizeValue(value) + "\n");
+	private String buildDeviceInfoLogText() {
+		return "=== Device Info ===\n" + buildDeviceInfoText();
+	}
+
+	private void appendSectionTitle(StringBuffer buffer, String title) {
+		buffer.append(title).append('\n');
+	}
+
+	private void appendBlankLine(StringBuffer buffer) {
+		buffer.append('\n');
+	}
+
+	private void appendLine(StringBuffer buffer, String label, String value) {
+		buffer.append(label).append(": ").append(normalizeValue(value)).append('\n');
 	}
 
 	private String readProperty(String key) {

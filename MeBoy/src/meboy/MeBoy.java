@@ -384,6 +384,17 @@ public class MeBoy extends MIDlet implements CommandListener, ResumeGameControll
 	public static void showLog() {
 		instance.showMessage(getLiteralOrDefault(28, "Log"), logString);
 	}
+
+	public void appendLog(String message) {
+		if (message == null || message.length() == 0) {
+			return;
+		}
+		log(message);
+	}
+
+	public void openLog() {
+		showLog();
+	}
 	
 	public void showMessage(String title, String message) {
 		if (title == null || title.length() == 0) {

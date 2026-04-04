@@ -11,6 +11,7 @@ public final class AppInfo {
 	public static final String DEVICE_INFO_LABEL = "Device Info";
 	public static final String DEVICE_INFO_TITLE = "Device Info";
 	public static final String BACK_LABEL = "Back";
+	public static final String LOG_LABEL = "Log";
 	public static final String WAIT_FORM_TITLE = "MeBoy";
 	public static final String WAIT_STORAGE_MESSAGE = "Opening storage...";
 	public static final String WAIT_LOADING_ROM_MESSAGE = "Loading ROM...";
