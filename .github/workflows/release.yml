@@ -1,0 +1,124 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish, for example v2.4.2"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve tag
+        id: ref
+        shell: bash
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.tag }}
+
+      - name: Read app version
+        id: version
+        shell: bash
+        run: |
+          version="$(sed -n 's/^app\.version=//p' MeBoy/resources/version.properties | tr -d '\r' | head -n 1)"
+          if [ -z "$version" ]; then
+            echo "Could not read app.version from MeBoy/resources/version.properties" >&2
+            exit 1
+          fi
+
+          short_version="${version%.*}"
+          if [ "$short_version" = "$version" ]; then
+            short_version="$version"
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "short_version=$short_version" >> "$GITHUB_OUTPUT"
+
+      - name: Validate tag matches version
+        shell: bash
+        run: |
+          expected_tag="v${{ steps.version.outputs.version }}"
+          actual_tag="${{ steps.ref.outputs.tag }}"
+
+          if [ "$actual_tag" != "$expected_tag" ]; then
+            echo "Tag $actual_tag does not match MeBoy/resources/version.properties ($expected_tag expected)." >&2
+            exit 1
+          fi
+
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          short_version="${{ steps.version.outputs.short_version }}"
+
+          extract_section() {
+            local target_version="$1"
+            awk -v version="$target_version" '
+              BEGIN { capture = 0 }
+              $0 ~ "^## version " version "([[:space:]]*:|$)" { capture = 1; next }
+              capture && $0 ~ "^## version " { exit }
+              capture { print }
+            ' CHANGELOG.md
+          }
+
+          notes="$(extract_section "$version")"
+          if [ -z "$notes" ] && [ "$short_version" != "$version" ]; then
+            notes="$(extract_section "$short_version")"
+          fi
+
+          if [ -n "$notes" ]; then
+            {
+              echo "Release $version"
+              echo
+              printf '%s\n' "$notes" | sed '/./,$!d'
+            } > release_notes.md
+          else
+            {
+              echo "Release $version"
+              echo
+              echo "No matching section was found in CHANGELOG.md."
+              echo "Update CHANGELOG.md to add release notes for this version."
+            } > release_notes.md
+          fi
+
+          echo "path=release_notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ steps.ref.outputs.tag }}
+          RELEASE_NAME: MeBoy ${{ steps.version.outputs.version }}
+          RELEASE_NOTES_PATH: ${{ steps.notes.outputs.path }}
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync(process.env.RELEASE_NOTES_PATH, 'utf8');
+
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: process.env.RELEASE_TAG,
+              name: process.env.RELEASE_NAME,
+              body,
+              draft: false,
+              prerelease: false,
+              generate_release_notes: false
+            });

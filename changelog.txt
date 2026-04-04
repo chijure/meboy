@@ -2,6 +2,19 @@ MeBoy Change Log:
 -----------------
 
 
+version 2.4.2: 4 Apr 2026
+-------------------------
+
+- Added .sav battery-save export/import compatibility with VBA-M
+- Centralized the application version in MeBoy/resources/version.properties so
+  MeBoy, MeBoyBuilder, Ant metadata and helper scripts read it from one place
+- Updated version display and manifest generation to follow the shared version
+  property instead of duplicated hardcoded values
+- Added a GitHub Actions release workflow that validates tags against
+  app.version and publishes release notes from CHANGELOG.md
+- Documented the GitHub release process in README.md
+
+
 version 2.4: 22 Mar 2026
 ------------------------
 

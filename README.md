@@ -46,6 +46,22 @@ If KEmulator reports `Unsupported major.minor version`, rebuild MIDlet classes w
 ## Changelog
 See `CHANGELOG.md`.
 
+## GitHub Releases
+Release management is tied to `MeBoy/resources/version.properties`.
+
+1. Update `MeBoy/resources/version.properties`.
+2. Add or update the matching entry in `CHANGELOG.md`.
+3. Commit the changes.
+4. Create a Git tag that matches the version exactly, for example `v2.4.2`.
+5. Push the commit and tag to GitHub.
+
+The workflow at `.github/workflows/release.yml` will:
+- verify that the tag matches `app.version`
+- generate release notes from `CHANGELOG.md`
+- publish a GitHub Release named `MeBoy X.Y.Z`
+
+If `CHANGELOG.md` has no exact `X.Y.Z` section, the workflow also accepts the shorter `X.Y` heading as a fallback.
+
 ## License
 MeBoy is distributed under [GPLv2 license](https://github.com/chijure/meboy/blob/master/LICENSE).
 
